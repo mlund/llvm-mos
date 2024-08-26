@@ -189,7 +189,15 @@ static const char *const GCCRegNames[] = {
     "rs98",  "rs99",  "rs100", "rs101", "rs102", "rs103", "rs104", "rs105",
     "rs106", "rs107", "rs108", "rs109", "rs110", "rs111", "rs112", "rs113",
     "rs114", "rs115", "rs116", "rs117", "rs118", "rs119", "rs120", "rs121",
-    "rs122", "rs123", "rs124", "rs125", "rs126", "rs127",
+    "rs122", "rs123", "rs124", "rs125", "rs126", "rs127", "rl0",   "rl1",
+    "rl2",   "rl3",   "rl4",   "rl5",   "rl6",   "rl7",   "rl8",   "rl9",
+    "rl10",  "rl11",  "rl12",  "rl13",  "rl14",  "rl15",  "rl16",  "rl17",
+    "rl18",  "rl19",  "rl20",  "rl21",  "rl22",  "rl23",  "rl24",  "rl25",
+    "rl26",  "rl27",  "rl28",  "rl29",  "rl30",  "rl31",  "rl32",  "rl33",
+    "rl34",  "rl35",  "rl36",  "rl37",  "rl38",  "rl39",  "rl40",  "rl41",
+    "rl42",  "rl43",  "rl44",  "rl45",  "rl46",  "rl47",  "rl48",  "rl49",
+    "rl50",  "rl51",  "rl52",  "rl53",  "rl54",  "rl55",  "rl56",  "rl57",
+    "rl58",  "rl59",  "rl60",  "rl61",  "rl62",  "rl63",
 };
 
 llvm::ArrayRef<const char *> MOSTargetInfo::getGCCRegNames() const {
