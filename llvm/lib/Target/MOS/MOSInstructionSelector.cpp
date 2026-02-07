@@ -1724,6 +1724,8 @@ bool MOSInstructionSelector::selectMergeValues(MachineInstr &MI) {
 
 bool MOSInstructionSelector::selectLshrShlE(MachineInstr &MI) {
   auto [Dst, CarryOut, Src, CarryIn] = MI.getFirst4Regs();
+  MachineIRBuilder Builder(MI);
+  const auto &MRI = *Builder.getMRI();
 
   unsigned ShiftOpcode, RotateOpcode;
   switch (MI.getOpcode()) {
@@ -1734,13 +1736,36 @@ bool MOSInstructionSelector::selectLshrShlE(MachineInstr &MI) {
     RotateOpcode = MOS::ROL;
     break;
   case MOS::G_LSHRE:
+    // The legalizer lowers G_ASHR to G_SBC(Src, 0x80, carry=1) + G_LSHRE,
+    // which normally selects to CMP #128 + ROR. On 65CE02, ASR performs
+    // both operations in a single instruction, preserving the sign bit.
+    if (STI.has65CE02()) {
+      MachineInstr *CarryDef = MRI.getVRegDef(CarryIn);
+      if (CarryDef && CarryDef->getOpcode() == MOS::G_SBC &&
+          CarryDef->getOperand(1).getReg() == CarryIn) {
+        Register SbcLHS = CarryDef->getOperand(5).getReg();
+        auto SbcRHS = getIConstantVRegValWithLookThrough(
+            CarryDef->getOperand(6).getReg(), MRI);
+        auto SbcCIn = getIConstantVRegValWithLookThrough(
+            CarryDef->getOperand(7).getReg(), MRI);
+        if (SbcLHS == Src && SbcRHS &&
+            SbcRHS->Value.getZExtValue() == 0x80 && SbcCIn &&
+            !SbcCIn->Value.isZero()) {
+          auto Asr =
+              Builder.buildInstr(MOS::ASR, {Dst, CarryOut}, {Src});
+          if (!constrainSelectedInstRegOperands(*Asr, TII, TRI, RBI))
+            return false;
+          MI.eraseFromParent();
+          return true;
+        }
+      }
+    }
     ShiftOpcode = MOS::LSR;
     RotateOpcode = MOS::ROR;
     break;
   }
 
-  MachineIRBuilder Builder(MI);
-  if (mi_match(CarryIn, *Builder.getMRI(), m_SpecificICst(0))) {
+  if (mi_match(CarryIn, MRI, m_SpecificICst(0))) {
     auto Asl = Builder.buildInstr(ShiftOpcode, {Dst, CarryOut}, {Src});
     if (!constrainSelectedInstRegOperands(*Asl, TII, TRI, RBI))
       return false;
