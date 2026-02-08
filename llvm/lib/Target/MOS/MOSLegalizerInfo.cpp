@@ -679,39 +679,18 @@ bool MOSLegalizerInfo::legalizeAddSub(LegalizerHelper &Helper,
   if (MI.getOpcode() == MOS::G_SUB)
     Amt = -Amt;
 
-  // Always decompose into i8 parts so the register allocator can freely assign
-  // A/X/Y. INW/DEW are selected post-RA for adjacent Imag8 pairs.
-  LLT PartType = S8;
-  unsigned SrcBits = MRI.getType(Src).getSizeInBits();
-  unsigned PartBits = PartType.getSizeInBits();
-  size_t NumParts = SrcBits / PartBits;
-
-  // buildUnmerge/buildMergeValues require >1 part; handle single-part directly.
-  SmallVector<Register> SrcParts;
-  if (NumParts > 1) {
-    auto Unmerge = Builder.buildUnmerge(PartType, Src);
-    for (MachineOperand &MO : unmergeDefs(Unmerge))
-      SrcParts.push_back(MO.getReg());
-  } else {
-    SrcParts.push_back(Src);
-  }
-
+  auto Unmerge = Builder.buildUnmerge(S8, Src);
+  size_t NumParts = llvm::size(unmergeDefs(Unmerge));
   auto IncDec = Builder.buildInstr(Amt == 1 ? MOS::G_INC : MOS::G_DEC);
   SmallVector<Register> DstParts;
   for (size_t Idx = 0; Idx < NumParts; ++Idx) {
-    Register R = MRI.createGenericVirtualRegister(PartType);
+    Register R = MRI.createGenericVirtualRegister(S8);
     IncDec.addDef(R);
     DstParts.push_back(R);
   }
-  for (Register R : SrcParts)
-    IncDec.addUse(R);
-
-  // See above: buildMergeValues asserts on single-part input.
-  if (NumParts > 1)
-    Builder.buildMergeValues(Dst, DstParts);
-  else
-    Builder.buildCopy(Dst, DstParts[0]);
-
+  for (MachineOperand &MO : unmergeDefs(Unmerge))
+    IncDec.addUse(MO.getReg());
+  Builder.buildMergeValues(Dst, DstParts);
   MI.eraseFromParent();
   return true;
 }
