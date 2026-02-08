@@ -679,16 +679,10 @@ bool MOSLegalizerInfo::legalizeAddSub(LegalizerHelper &Helper,
   if (MI.getOpcode() == MOS::G_SUB)
     Amt = -Amt;
 
-  // 65CE02 has INW/DEW that operate on 16-bit words. Use i16 parts for
-  // increments (INW chains via Z+BNE). For decrements, restrict to exactly
-  // i16 since DEW lacks usable borrow detection for multi-word chains.
-  const MOSSubtarget &STI = Builder.getMF().getSubtarget<MOSSubtarget>();
+  // Always decompose into i8 parts so the register allocator can freely assign
+  // A/X/Y. INW/DEW are selected post-RA for adjacent Imag8 pairs.
   LLT PartType = S8;
   unsigned SrcBits = MRI.getType(Src).getSizeInBits();
-  if (STI.has65CE02() && SrcBits >= 16 && (SrcBits % 16 == 0) &&
-      (Amt == 1 || (Amt == -1 && SrcBits == 16)))
-    PartType = LLT::scalar(16);
-
   unsigned PartBits = PartType.getSizeInBits();
   size_t NumParts = SrcBits / PartBits;
 
