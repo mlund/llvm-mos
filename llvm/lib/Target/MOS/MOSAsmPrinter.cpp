@@ -178,7 +178,8 @@ bool MOSAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
       break;
     }
 
-    if (MOS::Imag16RegClass.contains(Reg) || MOS::Imag8RegClass.contains(Reg))
+    if (MOS::Imag32RegClass.contains(Reg) ||
+        MOS::Imag16RegClass.contains(Reg) || MOS::Imag8RegClass.contains(Reg))
       OS << TRI.getImag8SymbolName(Reg);
     else
       OS << TRI.getRegAsmName(Reg);

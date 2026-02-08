@@ -661,6 +661,12 @@ void MOSInstrInfo::copyPhysRegImpl(MachineIRBuilder &Builder, Register DestReg,
       copyPhysRegImpl(Builder, DestReg,
                       getRegWithVal(Builder, SrcReg, MOS::GPRRegClass));
     }
+  } else if (AreClasses(MOS::Imag32RegClass, MOS::Imag32RegClass)) {
+    assert(SrcReg.isPhysical() && DestReg.isPhysical());
+    copyPhysRegImpl(Builder, TRI.getSubReg(DestReg, MOS::subloword),
+                    TRI.getSubReg(SrcReg, MOS::subloword));
+    copyPhysRegImpl(Builder, TRI.getSubReg(DestReg, MOS::subhiword),
+                    TRI.getSubReg(SrcReg, MOS::subhiword));
   } else if (AreClasses(MOS::Imag16RegClass, MOS::Imag16RegClass)) {
     assert(SrcReg.isPhysical() && DestReg.isPhysical());
     copyPhysRegImpl(Builder, TRI.getSubReg(DestReg, MOS::sublo),
@@ -925,7 +931,35 @@ void MOSInstrInfo::loadStoreRegStackSlot(
       Instr.addDef(Ptr, RegState::EarlyClobber);
     Instr.addFrameIndex(FrameIndex).addImm(0).addMemOperand(MMO);
   } else {
-    if ((Reg.isPhysical() && MOS::Imag16RegClass.contains(Reg)) ||
+    if ((Reg.isPhysical() && MOS::Imag32RegClass.contains(Reg)) ||
+        (Reg.isVirtual() &&
+         MRI.getRegClass(Reg)->hasSuperClassEq(&MOS::Imag32RegClass))) {
+      Register Tmp = Reg;
+      if (Reg.isVirtual()) {
+        Tmp = MRI.createVirtualRegister(&MOS::Imag32RegClass);
+        if (!IsLoad)
+          Builder.buildCopy(Tmp, Reg);
+      }
+      for (unsigned ByteIdx = 0; ByteIdx < 4; ++ByteIdx) {
+        unsigned WordSubIdx =
+            (ByteIdx < 2) ? MOS::subloword : MOS::subhiword;
+        unsigned ByteSubIdx = (ByteIdx & 1) ? MOS::subhi : MOS::sublo;
+        MachineOperand MO = MachineOperand::CreateReg(Register(), IsLoad);
+        if (Reg.isPhysical()) {
+          MO.setReg(
+              TRI->getSubReg(TRI->getSubReg(Reg, WordSubIdx), ByteSubIdx));
+        } else {
+          MO.setReg(Tmp);
+          MO.setSubReg(TRI->composeSubRegIndices(WordSubIdx, ByteSubIdx));
+          if (MO.isDef())
+            MO.setIsUndef();
+        }
+        loadStoreByteStaticStackSlot(Builder, MO, FrameIndex, ByteIdx,
+                                     MF.getMachineMemOperand(MMO, ByteIdx, 1));
+      }
+      if (IsLoad && Tmp != Reg)
+        Builder.buildCopy(Reg, Tmp);
+    } else if ((Reg.isPhysical() && MOS::Imag16RegClass.contains(Reg)) ||
         (Reg.isVirtual() &&
          MRI.getRegClass(Reg)->hasSuperClassEq(&MOS::Imag16RegClass))) {
       MachineOperand Lo = MachineOperand::CreateReg(Reg, IsLoad);

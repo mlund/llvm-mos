@@ -182,6 +182,8 @@ static const TargetRegisterClass &getRegClassForType(LLT Ty) {
     return MOS::Anyi8RegClass;
   case 16:
     return MOS::Imag16RegClass;
+  case 32:
+    return MOS::Imag32RegClass;
   }
 }
 
@@ -1699,8 +1701,37 @@ bool MOSInstructionSelector::selectRMW(MachineInstr &MI) {
 
 bool MOSInstructionSelector::selectMergeValues(MachineInstr &MI) {
   MachineIRBuilder Builder(MI);
-  const MachineRegisterInfo &MRI = *Builder.getMRI();
+  MachineRegisterInfo &MRI = *Builder.getMRI();
 
+  // s32 from 4×s8: compose two s16 halves, then combine into s32.
+  if (MI.getNumOperands() - 1 == 4) {
+    Register Dst = MI.getOperand(0).getReg();
+    Register B0 = MI.getOperand(1).getReg();
+    Register B1 = MI.getOperand(2).getReg();
+    Register B2 = MI.getOperand(3).getReg();
+    Register B3 = MI.getOperand(4).getReg();
+
+    Register LoWord = MRI.createVirtualRegister(&MOS::Imag16RegClass);
+    composePtr(Builder, LoWord, B0, B1);
+
+    Register HiWord = MRI.createVirtualRegister(&MOS::Imag16RegClass);
+    composePtr(Builder, HiWord, B2, B3);
+
+    // Assign Imag32 register class to Dst before building the REG_SEQUENCE,
+    // replacing its generic type. This avoids constrainGenericOp creating a
+    // new vreg + COPY that would leave the original Dst unconstrained.
+    MRI.setRegClass(Dst, &MOS::Imag32RegClass);
+    Builder.buildInstr(MOS::REG_SEQUENCE)
+        .addDef(Dst)
+        .addUse(LoWord)
+        .addImm(MOS::subloword)
+        .addUse(HiWord)
+        .addImm(MOS::subhiword);
+    MI.eraseFromParent();
+    return true;
+  }
+
+  // s16 from 2×s8.
   auto [Dst, Lo, Hi] = MI.getFirst3Regs();
 
   auto LoConst = getIConstantVRegValWithLookThrough(Lo, MRI);
@@ -1923,11 +1954,44 @@ bool MOSInstructionSelector::selectIncDecMB(MachineInstr &MI) {
 }
 
 bool MOSInstructionSelector::selectUnMergeValues(MachineInstr &MI) {
+  MachineIRBuilder Builder(MI);
+  MachineRegisterInfo &MRI = *Builder.getMRI();
+
+  // s32 → 4×s8: extract bytes via composed sub-register indices.
+  if (MI.getNumOperands() - 1 == 4) {
+    Register Src = MI.getOperand(4).getReg();
+    Register B0 = MI.getOperand(0).getReg();
+    Register B1 = MI.getOperand(1).getReg();
+    Register B2 = MI.getOperand(2).getReg();
+    Register B3 = MI.getOperand(3).getReg();
+
+    // Assign Imag32 register class before extracting bytes, to avoid
+    // constrainGenericOp leaving the source vreg unconstrained.
+    MRI.setRegClass(Src, &MOS::Imag32RegClass);
+
+    unsigned SubIdxPairs[4][2] = {
+        {MOS::subloword, MOS::sublo},
+        {MOS::subloword, MOS::subhi},
+        {MOS::subhiword, MOS::sublo},
+        {MOS::subhiword, MOS::subhi},
+    };
+    Register Dsts[4] = {B0, B1, B2, B3};
+    for (unsigned I = 0; I < 4; ++I) {
+      unsigned Composed =
+          TRI.composeSubRegIndices(SubIdxPairs[I][0], SubIdxPairs[I][1]);
+      auto Copy = Builder.buildCopy(Dsts[I], Src);
+      Copy->getOperand(1).setSubReg(Composed);
+      constrainGenericOp(*Copy);
+    }
+
+    MI.eraseFromParent();
+    return true;
+  }
+
+  // s16 → 2×s8.
   auto [Lo, Hi, Src] = MI.getFirst3Regs();
 
-  MachineIRBuilder Builder(MI);
-
-  MachineInstr *SrcMI = getDefIgnoringCopies(Src, *Builder.getMRI());
+  MachineInstr *SrcMI = getDefIgnoringCopies(Src, MRI);
   std::optional<std::pair<Register, Register>> LoHi;
   switch (SrcMI->getOpcode()) {
   case MOS::G_FRAME_INDEX:

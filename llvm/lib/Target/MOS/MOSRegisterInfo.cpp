@@ -49,9 +49,11 @@ MOSRegisterInfo::MOSRegisterInfo()
                          /*PC=*/0, /*HwMode=*/0),
       Imag8SymbolNames(new std::string[getNumRegs()]), Reserved(getNumRegs()) {
   for (unsigned Reg : seq(0u, getNumRegs())) {
-    // Pointers are referred to by their low byte in the addressing modes that
-    // use them.
+    // Pointers and 32-bit registers are referred to by their low byte in the
+    // addressing modes that use them.
     unsigned R = Reg;
+    if (MOS::Imag32RegClass.contains(R))
+      R = getSubReg(R, MOS::subloword);
     if (MOS::Imag16RegClass.contains(R))
       R = getSubReg(R, MOS::sublo);
     if (!MOS::Imag8RegClass.contains(R))
@@ -71,6 +73,15 @@ MOSRegisterInfo::MOSRegisterInfo()
 
   // Reserve one temporary register for use by register scavenger.
   reserveAllSubregs(&Reserved, MOS::RS8);
+
+  // Reserve Imag32 super-registers that contain reserved Imag16 sub-registers.
+  // reserveAllSubregs only walks down, so we must explicitly reserve up.
+  for (Register RQ : enum_seq_inclusive(MOS::RQ0, MOS::RQ63))
+    for (Register Sub : subregs(RQ))
+      if (Reserved.test(Sub)) {
+        Reserved.set(RQ);
+        break;
+      }
 }
 
 const MCPhysReg *
@@ -956,6 +967,9 @@ MOSInstrCost MOSRegisterInfo::copyCost(Register DestReg, Register SrcReg,
     // May need to PHA/PLA around.
     return (PushCost + PopCost) / 2 + copyCost(DestReg, MOS::A, STI) +
            copyCost(MOS::A, SrcReg, STI);
+  }
+  if (AreClasses(MOS::Imag32RegClass, MOS::Imag32RegClass)) {
+    return copyCost(MOS::RC0, MOS::RC1, STI) * 4;
   }
   if (AreClasses(MOS::Imag16RegClass, MOS::Imag16RegClass)) {
     return copyCost(MOS::RC0, MOS::RC1, STI) * 2;

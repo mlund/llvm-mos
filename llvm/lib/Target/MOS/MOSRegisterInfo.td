@@ -20,6 +20,12 @@ def sublo : MOSSubRegIndex<8>;
 // High byte of a 16-bit imaginary pointer register.
 def subhi : MOSSubRegIndex<8, 8>;
 
+// Low word of a 32-bit imaginary register.
+def subloword : MOSSubRegIndex<16>;
+
+// High word of a 32-bit imaginary register.
+def subhiword : MOSSubRegIndex<16, 16>;
+
 // Carry bit of the 8-bit processor status register.
 def subcarry : MOSSubRegIndex<1>;
 
@@ -147,6 +153,24 @@ foreach I = 0...!add(MaxImag16Regs, -1) in {
        !cast<Register>("RC"#!add(!shl(I,1),1))]>;
 }
 
+// 32-bit imaginary registers (consecutive pairs of 16-bit registers).
+// Used for i32 inline asm operands (e.g. 45GS02 32-bit ZP indirect addressing).
+class MOSImagReg32<bits<16> num, string name, list<Register> subregs>
+    : MOSReg<num, name> {
+  let SubRegs = subregs;
+  let SubRegIndices = [subloword, subhiword];
+  let CoveredBySubRegs = 1;
+}
+
+defvar MaxImag32Regs = !sra(MaxImag16Regs, 1);
+defvar Imag32RegsOffset = !add(Imag16RegsOffset, MaxImag16Regs);
+
+foreach I = 0...!add(MaxImag32Regs, -1) in {
+  def RQ#I: MOSImagReg32<!add(I, Imag32RegsOffset), "rq"#!cast<string>(I),
+      [!cast<Register>("RS"#!shl(I, 1)),
+       !cast<Register>("RS"#!add(!shl(I,1),1))]>;
+}
+
 //===----------------------------------------------------------------------===//
 //  Register classes
 //===----------------------------------------------------------------------===//
@@ -160,6 +184,7 @@ class MOSReg1Class<dag RegList>: MOSRegClass<[i1], 8, RegList> {
 }
 class MOSReg8Class<dag RegList>: MOSRegClass<[i8], 8, RegList>;
 class MOSReg16Class<dag RegList>: MOSRegClass<[i16], 8, RegList>;
+class MOSReg32Class<dag RegList>: MOSRegClass<[i32], 8, RegList>;
 
 // Single register classes.
 let isPressureFineGrained = true in {
@@ -179,6 +204,7 @@ let isPressureFineGrained = true in {
 }
 def Imag8 : MOSReg8Class<(sequence "RC%u", 0, !add(MaxImag8Regs, -1))>;
 def Imag16 : MOSReg16Class<(sequence "RS%u", 0, !add(MaxImag16Regs, -1))>;
+def Imag32 : MOSReg32Class<(sequence "RQ%u", 0, !add(MaxImag32Regs, -1))>;
 
 // Instruction-specific register classes.
 def AImag8 : MOSReg8Class<(add Imag8, A)>;

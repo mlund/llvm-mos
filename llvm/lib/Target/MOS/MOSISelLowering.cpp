@@ -102,9 +102,10 @@ unsigned MOSTargetLowering::getNumRegistersForCallingConv(
 
 unsigned MOSTargetLowering::getNumRegistersForInlineAsm(LLVMContext &Context,
                                                         EVT VT) const {
-  // 16-bit inputs and outputs must be passed in Imag16 registers to allow using
-  // pointer values in inline assembly.
-  if (VT == MVT::i16)
+  // 16-bit and 32-bit inputs and outputs must be passed in single imaginary
+  // registers to allow using pointer and 32-bit ZP indirect values in inline
+  // assembly.
+  if (VT == MVT::i16 || VT == MVT::i32)
     return 1;
   return TargetLowering::getNumRegistersForInlineAsm(Context, VT);
 }
@@ -138,6 +139,8 @@ MOSTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
     default:
       break;
     case 'r':
+      if (VT == MVT::i32)
+        return std::make_pair(0U, &MOS::Imag32RegClass);
       if (VT == MVT::i16)
         return std::make_pair(0U, &MOS::Imag16RegClass);
       return std::make_pair(0U, &MOS::Imag8RegClass);
