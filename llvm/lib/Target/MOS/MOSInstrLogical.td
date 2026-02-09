@@ -258,6 +258,20 @@ def RORIdx : MOSRotateRMW {
 }
 
 //===---------------------------------------------------------------------===//
+// Negation Instructions
+//===---------------------------------------------------------------------===//
+
+// NEG only exists in accumulator mode and does not produce carry, so it
+// can only replace standalone i8 negation (G_SUB, not G_USUBE).
+let Predicates = [Has65CE02] in {
+  def NEG : MOSLogicalInstr {
+    dag OutOperandList = (outs Ac:$dst);
+    dag InOperandList = (ins Ac:$src);
+    let Constraints = "$dst = $src";
+  }
+}
+
+//===---------------------------------------------------------------------===//
 // BIT Instructions
 //===---------------------------------------------------------------------===//
 // Ever the odd duck.

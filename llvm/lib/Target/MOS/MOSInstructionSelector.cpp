@@ -452,6 +452,21 @@ bool MOSInstructionSelector::selectAddSub(MachineInstr &MI) {
       return false;
   }
 
+  // Intercept i8 negation (sub 0, x) before the general SBC path to emit a
+  // single NEG instruction instead of the SEC / LDA #0 / SBC sequence.
+  if (MI.getOpcode() == MOS::G_SUB && STI.has65CE02()) {
+    auto LHSConst = getIConstantVRegValWithLookThrough(
+        MI.getOperand(1).getReg(), MRI);
+    if (LHSConst && LHSConst->Value.isZero()) {
+      auto Neg = Builder.buildInstr(MOS::NEG, {Dst},
+                                    {MI.getOperand(2).getReg()});
+      if (!constrainSelectedInstRegOperands(*Neg, TII, TRI, RBI))
+        return false;
+      MI.eraseFromParent();
+      return true;
+    }
+  }
+
   int64_t CarryInVal = MI.getOpcode() == MOS::G_ADD ? 0 : -1;
 
   bool Success;
