@@ -187,6 +187,9 @@ void MOSMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) {
     OutMI.addOperand(Addr);
     return;
   }
+  case MOS::NEG:
+    OutMI.setOpcode(MOS::NEG_Implied);
+    return;
   case MOS::ASL:
   case MOS::LSR:
   case MOS::ROL:

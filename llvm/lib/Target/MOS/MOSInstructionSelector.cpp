@@ -452,6 +452,19 @@ bool MOSInstructionSelector::selectAddSub(MachineInstr &MI) {
       return false;
   }
 
+  if (MI.getOpcode() == MOS::G_SUB && STI.has65CE02()) {
+    assert(MRI.getType(Dst) == LLT::scalar(8));
+    auto LHSConst = getIConstantVRegValWithLookThrough(
+        MI.getOperand(1).getReg(), MRI);
+    if (LHSConst && LHSConst->Value.isZero()) {
+      auto Neg = Builder.buildInstr(MOS::NEG, {Dst},
+                                    {MI.getOperand(2).getReg()});
+      constrainSelectedInstRegOperands(*Neg, TII, TRI, RBI);
+      MI.eraseFromParent();
+      return true;
+    }
+  }
+
   int64_t CarryInVal = MI.getOpcode() == MOS::G_ADD ? 0 : -1;
 
   bool Success;

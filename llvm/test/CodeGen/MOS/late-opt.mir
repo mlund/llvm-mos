@@ -28,6 +28,20 @@ body: |
     RTS implicit $n
 ...
 ---
+name: cmpzero_neg_elision
+body: |
+  bb.0.entry:
+    liveins: $a
+    ; CHECK-LABEL: name: cmpzero_neg_elision
+    ; CHECK: liveins: $a
+    ; CHECK-NEXT: {{  $}}
+    ; CHECK-NEXT: $a = NEG killed $a, implicit-def $nz
+    ; CHECK-NEXT: RTS implicit $n
+    $a = NEG killed $a
+    CmpZero $a, implicit-def $n, implicit-def $c
+    RTS implicit $n
+...
+---
 name: cmpzero_copy_elision
 body: |
   bb.0.entry:

@@ -43,6 +43,8 @@ namespace {
 
 class MOSAsmPrinter : public AsmPrinter {
   MOSMCInstLower InstLowering;
+  // Consecutive NEG opcodes prefix a Q-register instruction on 45GS02.
+  bool PreviousWasNEG = false;
 
 public:
   explicit MOSAsmPrinter(TargetMachine &TM,
@@ -62,6 +64,12 @@ public:
   void EmitToStreamer(MCStreamer &S, MCInst &Inst);
 
   void emitInstruction(const MachineInstr *MI) override;
+
+  void emitInlineAsmStart() const override;
+
+  void emitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
+                        const MCSubtargetInfo *EndInfo,
+                        const MachineInstr *MI) override;
 
   bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
                        const char *ExtraCode, raw_ostream &OS) override;
@@ -121,7 +129,15 @@ void MOSAsmPrinter::EmitToStreamer(MCStreamer &S, MCInst &Inst) {
   // If this instruction contains an out-of-range immediate address, perform an
   // early relax.
   MOSAsmBackend::relaxForImmediate(Inst, MF->getSubtarget<MOSSubtarget>());
+  if (MF->getSubtarget<MOSSubtarget>().has45GS02() && PreviousWasNEG &&
+      Inst.getOpcode() == MOS::NEG_Implied) {
+    // Two NEG opcodes prefix a Q-register instruction on 45GS02.
+    MCInst Nop;
+    Nop.setOpcode(MOS::NOP_Implied);
+    AsmPrinter::EmitToStreamer(S, Nop);
+  }
   AsmPrinter::EmitToStreamer(S, Inst);
+  PreviousWasNEG = Inst.getOpcode() == MOS::NEG_Implied;
 }
 
 void MOSAsmPrinter::emitInstruction(const MachineInstr *MI) {
@@ -134,6 +150,25 @@ void MOSAsmPrinter::emitInstruction(const MachineInstr *MI) {
   MCInst Inst;
   InstLowering.lower(MI, Inst);
   EmitToStreamer(*OutStreamer, Inst);
+}
+
+void MOSAsmPrinter::emitInlineAsmStart() const {
+  AsmPrinter::emitInlineAsmStart();
+  if (!MF || !MF->getSubtarget<MOSSubtarget>().has45GS02() ||
+      !PreviousWasNEG)
+    return;
+
+  MCInst Nop;
+  Nop.setOpcode(MOS::NOP_Implied);
+  OutStreamer->emitInstruction(Nop, getSubtargetInfo());
+}
+
+void MOSAsmPrinter::emitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
+                                     const MCSubtargetInfo *EndInfo,
+                                     const MachineInstr *MI) {
+  AsmPrinter::emitInlineAsmEnd(StartInfo, EndInfo, MI);
+  // Inline asm may end in NEG without passing through EmitToStreamer.
+  PreviousWasNEG = true;
 }
 
 void MOSAsmPrinter::lowerOperand(const MachineOperand &MO, MCOperand &MCOp) {
