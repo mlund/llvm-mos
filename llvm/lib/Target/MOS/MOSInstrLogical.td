@@ -261,6 +261,15 @@ def RORIdx : MOSRotateRMW {
   dag InOperandList = (ins addr16:$addr, Xc:$idx, Cc:$carryin);
 }
 
+let Predicates = [Has65CE02] in {
+  // NEG does not produce carry, so it is only valid for plain i8 subtraction.
+  def NEG : MOSLogicalInstr {
+    dag OutOperandList = (outs Ac:$dst);
+    dag InOperandList = (ins Ac:$src);
+    let Constraints = "$dst = $src";
+  }
+}
+
 //===---------------------------------------------------------------------===//
 // BIT Instructions
 //===---------------------------------------------------------------------===//
