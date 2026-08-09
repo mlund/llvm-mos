@@ -446,11 +446,6 @@ static MachineBasicBlock *emitIncDecMB(MachineInstr &MI,
   MachineIRBuilder Builder(MI);
   const TargetRegisterInfo &TRI = *MBB->getParent()->getSubtarget().getRegisterInfo();
   const auto *MFI = MBB->getParent()->getInfo<MOSFunctionInfo>();
-  LivePhysRegs LiveRegs(TRI);
-  LiveRegs.addLiveOuts(*MBB);
-  for (auto &I : make_range(MBB->rbegin(),
-                            MachineBasicBlock::reverse_iterator(MI)))
-    LiveRegs.stepBackward(I);
   bool IsDec = MI.getOpcode() == MOS::DecMB || MI.getOpcode() == MOS::DecDcpMB;
   assert(IsDec || MI.getOpcode() == MOS::IncMB);
   unsigned FirstUseIdx = MI.getNumExplicitDefs();
@@ -483,13 +478,16 @@ static MachineBasicBlock *emitIncDecMB(MachineInstr &MI,
         bool IsLastWord = NextUseIdx >= MI.getNumExplicitOperands() - 1;
         // INW chains via Z+BNE. DEW lacks borrow detection, so only use on
         // the last word.
-        // A final INW must preserve the flags of the bytewise sequence. ZP
-        // stack pairs cannot guarantee that mapping after register allocation.
+        // A final INW is unsafe when the function has a ZP stack: the pair's
+        // zero page mapping is not guaranteed to survive that allocation.
+        // A promised Z does not block INW, which sets it from the whole word,
+        // exactly what the INC/BNE/INC chain leaves behind. DEW does block on
+        // it: the chain it replaces ends in DEC, whose Z reports the borrow
+        // out of the high byte rather than a zero word.
         UseWordOp = !SplitCSR &&
-                    ((!IsDec && (!IsLastWord ||
-                                 (!LiveRegs.contains(MOS::Z) &&
-                                  !MFI->ZeroPageStackValue))) ||
-                     (IsDec && IsLastWord));
+                    ((!IsDec && (!IsLastWord || !MFI->ZeroPageStackValue)) ||
+                     (IsDec && IsLastWord &&
+                      !MI.definesRegister(MOS::Z, &TRI)));
       }
     }
   }
@@ -572,6 +570,11 @@ static MachineBasicBlock *emitIncDecMB(MachineInstr &MI,
     }
   }
   if (IsLast) {
+    // INW and DEW are pseudos with no flag defs of their own, unlike the
+    // INC/DEC that would otherwise end the chain. If the multi-byte pseudo
+    // promised a Z, carry it over rather than leaving the use undefined.
+    if (UseWordOp && MI.definesRegister(MOS::Z, &TRI))
+      First.addDef(MOS::Z, RegState::Implicit);
     MI.eraseFromParent();
     return MBB;
   }
