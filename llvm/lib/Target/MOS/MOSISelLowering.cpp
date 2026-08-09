@@ -455,10 +455,10 @@ static MachineBasicBlock *emitIncDecMB(MachineInstr &MI,
   bool IsMemReg = IsImag8;
   bool IsLastByte = FirstUseIdx >= MI.getNumExplicitOperands() - 1;
 
-  // Defer the INW/DEW decision to post-RA so the register allocator can freely
-  // assign A/X/Y. Only use word ops when RA placed consecutive bytes into an
-  // adjacent Imag16 pair.
+  // ZP allocation runs before this post-RA expansion, and RA may form Imag16
+  // pairs, so only now can INW/DEW operands be known to be valid.
   bool UseWordOp = false;
+  bool IsDirectWordOp = false;
   unsigned NextUseIdx = FirstUseIdx + 1;
   Register WordReg;
   if (IsImag8 && !IsLastByte && STI.has65CE02()) {
@@ -481,8 +481,29 @@ static MachineBasicBlock *emitIncDecMB(MachineInstr &MI,
       }
     }
   }
-  bool IsLast = UseWordOp ? (NextUseIdx >= MI.getNumExplicitOperands() - 1)
-                           : IsLastByte;
+  if (!IsReg && !IsLastByte && STI.has65CE02()) {
+    const MachineOperand &Lo = MI.getOperand(FirstUseIdx);
+    const MachineOperand &Hi = MI.getOperand(NextUseIdx);
+    const auto *GV =
+        Lo.isGlobal()
+            ? dyn_cast<GlobalVariable>(Lo.getGlobal()->getAliaseeObject())
+            : nullptr;
+    if (GV && Hi.isGlobal() && isZeroPageAddress(Lo) &&
+        isZeroPageAddress(Hi) && Lo.getOffset() >= 0 &&
+        Hi.getOffset() == Lo.getOffset() + 1 &&
+        Hi.getOffset() < static_cast<int64_t>(
+                             MBB->getParent()->getDataLayout().getTypeAllocSize(
+                                 GV->getValueType())) &&
+        Lo.getGlobal()->getAliaseeObject() ==
+            Hi.getGlobal()->getAliaseeObject()) {
+      bool IsLastWord = NextUseIdx >= MI.getNumExplicitOperands() - 1;
+      // DEW does not report a borrow for a following word.
+      IsDirectWordOp = !IsDec || IsLastWord;
+      UseWordOp = IsDirectWordOp;
+    }
+  }
+  bool IsLast =
+      UseWordOp ? (NextUseIdx >= MI.getNumExplicitOperands() - 1) : IsLastByte;
   bool UseDcpOpcode = (!IsReg || IsMemReg) && !IsLast && STI.has6502X() &&
                       MI.getOpcode() == MOS::DecDcpMB;
 
@@ -496,9 +517,15 @@ static MachineBasicBlock *emitIncDecMB(MachineInstr &MI,
   }
   MachineInstrBuilder First;
   if (UseWordOp) {
-    First = Builder.buildInstr(IsDec ? MOS::DEWImag : MOS::INWImag);
-    First.addDef(WordReg).addUse(WordReg);
-    FirstDefIdx += 2; // Word op consumed both bytes
+    if (IsDirectWordOp) {
+      First = Builder.buildInstr(IsDec ? MOS::DEW_ZeroPage : MOS::INW_ZeroPage)
+                  .add(MI.getOperand(FirstUseIdx))
+                  .cloneMergedMemRefs({&MI});
+    } else {
+      First = Builder.buildInstr(IsDec ? MOS::DEWImag : MOS::INWImag);
+      First.addDef(WordReg).addUse(WordReg);
+    }
+    FirstDefIdx += IsDirectWordOp ? 0 : 2;
   } else if (UseDcpOpcode) {
     // 3. DEC (memory): Emit DCP opcode, if requested.
     if (IsMemReg) {

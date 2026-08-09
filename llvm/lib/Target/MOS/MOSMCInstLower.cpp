@@ -14,6 +14,7 @@
 #include "MCTargetDesc/MOSAsmBackend.h"
 #include "MCTargetDesc/MOSMCExpr.h"
 #include "MCTargetDesc/MOSMCTargetDesc.h"
+#include "MOS.h"
 #include "MOSInstrInfo.h"
 #include "MOSMachineFunctionInfo.h"
 #include "MOSRegisterInfo.h"
@@ -757,6 +758,11 @@ void MOSMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) {
     llvm_unreachable("Pseudoinstruction was never lowered.");
   }
 #endif
+  assert((MI->getOpcode() != MOS::INW_ZeroPage &&
+          MI->getOpcode() != MOS::DEW_ZeroPage) ||
+         (MI->getParent()->getParent()->getSubtarget<MOSSubtarget>().has65CE02() &&
+          isZeroPageAddress(MI->getOperand(0))) &&
+             "INW/DEW requires a zero-page address");
   for (const MachineOperand &MO : MI->operands()) {
     MCOperand MCOp;
     if (lowerOperand(MO, MCOp))
@@ -890,17 +896,7 @@ bool MOSMCInstLower::lowerOperand(const MachineOperand &MO, MCOperand &MCOp) {
 
 MCOperand MOSMCInstLower::lowerSymbolOperand(const MachineOperand &MO,
                                              const MCSymbol *Sym) {
-  const MachineFrameInfo &MFI = MO.getParent()->getMF()->getFrameInfo();
-  bool ZP;
-  if (MO.isFI()) {
-    ZP = MFI.getStackID(MO.getIndex()) == TargetStackID::MosZeroPage;
-  } else if (MO.isGlobal()) {
-    const auto *GV =
-        dyn_cast<GlobalVariable>(MO.getGlobal()->getAliaseeObject());
-    ZP = GV && GV->getAddressSpace() == MOS::AS_ZeroPage;
-  } else {
-    ZP = false;
-  }
+  bool ZP = isZeroPageAddress(MO);
 
   const MCExpr *Expr = MCSymbolRefExpr::create(Sym, Ctx);
   if (!MO.isJTI() && MO.getOffset() != 0)

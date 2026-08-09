@@ -13,6 +13,7 @@
 #include "MOSInstrInfo.h"
 
 #include "MCTargetDesc/MOSMCTargetDesc.h"
+#include "MOS.h"
 #include "MOSFrameLowering.h"
 #include "MOSInstrBuilder.h"
 #include "MOSRegisterInfo.h"
@@ -43,6 +44,18 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "mos-instrinfo"
+
+bool llvm::isZeroPageAddress(const MachineOperand &MO) {
+  if (MO.isFI()) {
+    const MachineFrameInfo &MFI = MO.getParent()->getMF()->getFrameInfo();
+    return MFI.getStackID(MO.getIndex()) == TargetStackID::MosZeroPage;
+  }
+  if (!MO.isGlobal())
+    return false;
+
+  const auto *GV = dyn_cast<GlobalVariable>(MO.getGlobal()->getAliaseeObject());
+  return GV && GV->getAddressSpace() == MOS::AS_ZeroPage;
+}
 
 #define GET_INSTRINFO_CTOR_DTOR
 #include "MOSGenInstrInfo.inc"

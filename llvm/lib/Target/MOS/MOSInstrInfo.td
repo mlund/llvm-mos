@@ -459,8 +459,14 @@ def ASR_Implied: InstLow3<"asr", 0b0100>; /// Arithmetic Shift Right accumulator
 def ASR_ZeroPage: Inst16<"asr", Opcode<0x44>, ZeroPage>; 
 def ASR_ZeroPageX: Inst16<"asr", Opcode<0x54>, ZeroPageX>; 
 
-def INW_ZeroPage : Inst16<"inw", OpcodeC3<0b111, 0b000>, ZeroPage>; /// Inc. word
-def DEW_ZeroPage : Inst16<"dew", OpcodeC3<0b110, 0b000>, ZeroPage>; /// Dec. word
+def INW_ZeroPage : Inst16<"inw", OpcodeC3<0b111, 0b000>, ZeroPage> {
+  let mayLoad = true;
+  let mayStore = true;
+}
+def DEW_ZeroPage : Inst16<"dew", OpcodeC3<0b110, 0b000>, ZeroPage> {
+  let mayLoad = true;
+  let mayStore = true;
+}
 
 def INZ_Implied: InstLowB<"inz", 0b0001>; /// INcrement Z register;
 def DEZ_Implied: InstLowB<"dez", 0b0011>; /// DEcrement Z register;
