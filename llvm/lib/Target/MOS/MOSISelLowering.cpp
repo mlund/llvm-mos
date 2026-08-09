@@ -445,6 +445,12 @@ static MachineBasicBlock *emitIncDecMB(MachineInstr &MI,
   //   modeled as registers, but exist in memory.
   MachineIRBuilder Builder(MI);
   const TargetRegisterInfo &TRI = *MBB->getParent()->getSubtarget().getRegisterInfo();
+  const auto *MFI = MBB->getParent()->getInfo<MOSFunctionInfo>();
+  LivePhysRegs LiveRegs(TRI);
+  LiveRegs.addLiveOuts(*MBB);
+  for (auto &I : make_range(MBB->rbegin(),
+                            MachineBasicBlock::reverse_iterator(MI)))
+    LiveRegs.stepBackward(I);
   bool IsDec = MI.getOpcode() == MOS::DecMB || MI.getOpcode() == MOS::DecDcpMB;
   assert(IsDec || MI.getOpcode() == MOS::IncMB);
   unsigned FirstUseIdx = MI.getNumExplicitDefs();
@@ -477,7 +483,13 @@ static MachineBasicBlock *emitIncDecMB(MachineInstr &MI,
         bool IsLastWord = NextUseIdx >= MI.getNumExplicitOperands() - 1;
         // INW chains via Z+BNE. DEW lacks borrow detection, so only use on
         // the last word.
-        UseWordOp = !SplitCSR && (!IsDec || IsLastWord);
+        // A final INW must preserve the flags of the bytewise sequence. ZP
+        // stack pairs cannot guarantee that mapping after register allocation.
+        UseWordOp = !SplitCSR &&
+                    ((!IsDec && (!IsLastWord ||
+                                 (!LiveRegs.contains(MOS::Z) &&
+                                  !MFI->ZeroPageStackValue))) ||
+                     (IsDec && IsLastWord));
       }
     }
   }
