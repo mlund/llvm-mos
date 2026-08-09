@@ -13,6 +13,11 @@
     ret void
   }
 
+  define void @final_imag_inc_with_live_z() {
+  entry:
+    ret void
+  }
+
   define void @negative_offset() {
   entry:
     ret void
@@ -40,6 +45,24 @@ body: |
     ; CHECK-NOT: INW_ZeroPage
     ; CHECK: INCAbs @boundary + 255, implicit-def $z
     IncMB @boundary + 255, @boundary + 256, implicit-def $c, implicit-def $v
+    RTS
+...
+---
+name: final_imag_inc_with_live_z
+tracksRegLiveness: true
+body: |
+  bb.0.entry:
+    successors: %bb.1
+    liveins: $rc2, $rc3
+    ; CHECK-LABEL: name: final_imag_inc_with_live_z
+    ; CHECK-NOT: $rs1 = INWImag $rs1
+    ; CHECK: $rc2 = INC $rc2
+    ; CHECK: $rc3 = INC $rc3
+    $rc2, $rc3 = IncMB $rc2, $rc3, implicit-def $c, implicit-def $v, implicit-def $z
+    BR %bb.1, $z, -1
+
+  bb.1:
+    liveins: $z
     RTS
 ...
 ---
