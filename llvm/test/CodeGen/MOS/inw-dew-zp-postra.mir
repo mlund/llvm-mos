@@ -1,0 +1,55 @@
+# RUN: llc -mtriple=mos -mcpu=mos65ce02 -run-pass=finalize-isel -verify-machineinstrs -o - %s | FileCheck %s
+--- |
+  @word = addrspace(1) global [2 x i8] zeroinitializer
+  @boundary = addrspace(1) global i8 0
+
+  define void @mixed() {
+  entry:
+    ret void
+  }
+
+  define void @boundary_inc() {
+  entry:
+    ret void
+  }
+
+  define void @negative_offset() {
+  entry:
+    ret void
+  }
+...
+---
+name: mixed
+tracksRegLiveness: true
+body: |
+  bb.0.entry:
+    liveins: $rc2, $rc3
+    ; CHECK-LABEL: name: mixed
+    ; CHECK: INW_ZeroPage @word, implicit-def $z
+    ; CHECK: $rs1 = INWImag $rs1
+    $rc2, $rc3 = IncMB @word, @word + 1, $rc2, $rc3, implicit-def $c, implicit-def $v
+    RTS implicit $rc2, implicit $rc3
+...
+---
+name: boundary_inc
+tracksRegLiveness: true
+body: |
+  bb.0.entry:
+    ; The pair extends beyond @boundary.
+    ; CHECK-LABEL: name: boundary_inc
+    ; CHECK-NOT: INW_ZeroPage
+    ; CHECK: INCAbs @boundary + 255, implicit-def $z
+    IncMB @boundary + 255, @boundary + 256, implicit-def $c, implicit-def $v
+    RTS
+...
+---
+name: negative_offset
+tracksRegLiveness: true
+body: |
+  bb.0.entry:
+    ; CHECK-LABEL: name: negative_offset
+    ; CHECK-NOT: INW_ZeroPage
+    ; CHECK: INCAbs @word - 1, implicit-def $z
+    IncMB @word - 1, @word, implicit-def $c, implicit-def $v
+    RTS
+...

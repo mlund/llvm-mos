@@ -19,6 +19,10 @@
 
 namespace llvm {
 
+class MachineOperand;
+
+bool isZeroPageAddress(const MachineOperand &MO);
+
 void initializeMOSCombinerPass(PassRegistry &);
 void initializeMOSCopyOptPass(PassRegistry &);
 void initializeMOSIndexIVPass(PassRegistry &);

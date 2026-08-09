@@ -5,6 +5,7 @@ target datalayout = "e-m:e-p:16:8-p1:8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:8-Fi8-n
 target triple = "mos-sim"
 
 declare void @ext() nocallback
+declare void @escape(ptr) nocallback
 
 ; Pointers reference Imag16 before ZP allocation; this covers #551's path.
 define ptr @ptr_add2(ptr %p) norecurse {
@@ -34,4 +35,33 @@ for.body:
   %inc1 = add i16 %i, 1
   %exitcond.not = icmp eq i16 %inc1, 12345
   br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
+}
+
+define void @frame() norecurse {
+; CHECK-LABEL: frame:
+; CHECK:       inw mos8(.Lframe_zp_stk)
+entry:
+  %p = alloca i16
+  store i16 0, ptr %p
+  call void @escape(ptr %p)
+  %v = load i16, ptr %p
+  %inc = add i16 %v, 1
+  store i16 %inc, ptr %p
+  ret void
+}
+
+define void @frame2() norecurse {
+; CHECK-LABEL: frame2:
+; CHECK:       inw mos8(.Lframe2_zp_stk+2)
+entry:
+  %padding = alloca i16
+  %p = alloca i16
+  store i16 0, ptr %padding
+  call void @escape(ptr %padding)
+  store i16 0, ptr %p
+  call void @escape(ptr %p)
+  %v = load i16, ptr %p
+  %inc = add i16 %v, 1
+  store i16 %inc, ptr %p
+  ret void
 }
