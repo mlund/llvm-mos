@@ -182,6 +182,8 @@ static const TargetRegisterClass &getRegClassForType(LLT Ty) {
     return MOS::Anyi8RegClass;
   case 16:
     return MOS::Imag16RegClass;
+  case 32:
+    return MOS::Imag32RegClass;
   }
 }
 
@@ -1663,7 +1665,28 @@ bool MOSInstructionSelector::selectRMW(MachineInstr &MI) {
 
 bool MOSInstructionSelector::selectMergeValues(MachineInstr &MI) {
   MachineIRBuilder Builder(MI);
-  const MachineRegisterInfo &MRI = *Builder.getMRI();
+  MachineRegisterInfo &MRI = *Builder.getMRI();
+  Register MergeDst = MI.getOperand(0).getReg();
+
+  if (MRI.getType(MergeDst) == LLT::scalar(32)) {
+    assert(MI.getNumOperands() == 5 && "Expected four i8 inputs");
+    Register LoWord = MRI.createVirtualRegister(&MOS::Imag16RegClass);
+    Register HiWord = MRI.createVirtualRegister(&MOS::Imag16RegClass);
+    composePtr(Builder, LoWord, MI.getOperand(1).getReg(),
+               MI.getOperand(2).getReg());
+    composePtr(Builder, HiWord, MI.getOperand(3).getReg(),
+               MI.getOperand(4).getReg());
+
+    MRI.setRegClass(MergeDst, &MOS::Imag32RegClass);
+    Builder.buildInstr(MOS::REG_SEQUENCE)
+        .addDef(MergeDst)
+        .addUse(LoWord)
+        .addImm(MOS::sublo16)
+        .addUse(HiWord)
+        .addImm(MOS::subhi16);
+    MI.eraseFromParent();
+    return true;
+  }
 
   auto [Dst, Lo, Hi] = MI.getFirst3Regs();
 
@@ -1880,11 +1903,35 @@ bool MOSInstructionSelector::selectIncDecMB(MachineInstr &MI) {
 }
 
 bool MOSInstructionSelector::selectUnMergeValues(MachineInstr &MI) {
+  MachineIRBuilder Builder(MI);
+  MachineRegisterInfo &MRI = *Builder.getMRI();
+  Register UnmergeSrc = MI.getOperand(MI.getNumOperands() - 1).getReg();
+
+  if (MRI.getType(UnmergeSrc) == LLT::scalar(32)) {
+    assert(MI.getNumOperands() == 5 && "Expected four i8 outputs");
+    MRI.setRegClass(UnmergeSrc, &MOS::Imag32RegClass);
+
+    const unsigned SubIdxPairs[4][2] = {
+        {MOS::sublo16, MOS::sublo},
+        {MOS::sublo16, MOS::subhi},
+        {MOS::subhi16, MOS::sublo},
+        {MOS::subhi16, MOS::subhi},
+    };
+    for (unsigned I = 0; I != 4; ++I) {
+      Register Dst = MI.getOperand(I).getReg();
+      unsigned SubIdx =
+          TRI.composeSubRegIndices(SubIdxPairs[I][0], SubIdxPairs[I][1]);
+      MachineInstrBuilder Copy = Builder.buildCopy(Dst, UnmergeSrc);
+      Copy->getOperand(1).setSubReg(SubIdx);
+      constrainGenericOp(*Copy);
+    }
+    MI.eraseFromParent();
+    return true;
+  }
+
   auto [Lo, Hi, Src] = MI.getFirst3Regs();
 
-  MachineIRBuilder Builder(MI);
-
-  MachineInstr *SrcMI = getDefIgnoringCopies(Src, *Builder.getMRI());
+  MachineInstr *SrcMI = getDefIgnoringCopies(Src, MRI);
   std::optional<std::pair<Register, Register>> LoHi;
   switch (SrcMI->getOpcode()) {
   case MOS::G_FRAME_INDEX:

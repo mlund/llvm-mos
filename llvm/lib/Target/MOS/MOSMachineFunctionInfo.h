@@ -33,6 +33,7 @@ struct MOSFunctionInfo : public MachineFunctionInfo {
   const GlobalValue *StaticStackValue = nullptr;
   const GlobalValue *ZeroPageStackValue = nullptr;
   DenseMap<Register, size_t> CSRZPOffsets;
+  bool UsesImag32 = false;
 };
 
 } // namespace llvm

@@ -22,6 +22,7 @@
 #include "TargetInfo/MOSTargetInfo.h"
 
 #include "llvm/ADT/StringSet.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MOSFlags.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -43,6 +44,7 @@ namespace {
 
 class MOSAsmPrinter : public AsmPrinter {
   MOSMCInstLower InstLowering;
+  bool UsesImag32 = false;
 
 public:
   explicit MOSAsmPrinter(TargetMachine &TM,
@@ -70,6 +72,8 @@ public:
                              const char *ExtraCode, raw_ostream &OS) override;
 
   void emitStartOfAsmFile(Module &M) override;
+  void emitFunctionBodyStart() override;
+  void emitEndOfAsmFile(Module &M) override;
 
   void emitJumpTableInfo() override;
 
@@ -178,7 +182,7 @@ bool MOSAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
       break;
     }
 
-    if (MOS::Imag32RegClass.contains(Reg) ||
+    if (MOS::Imag32AllRegClass.contains(Reg) ||
         MOS::Imag16RegClass.contains(Reg) || MOS::Imag8RegClass.contains(Reg))
       OS << TRI.getImag8SymbolName(Reg);
     else
@@ -202,6 +206,25 @@ void MOSAsmPrinter::emitStartOfAsmFile(Module &M) {
       *static_cast<MOSTargetStreamer *>(OutStreamer->getTargetStreamer());
   for (int I = 0; I < 32; I++)
     MTS.emitDirectiveZeroPage(OutContext.getOrCreateSymbol("__rc" + Twine(I)));
+}
+
+void MOSAsmPrinter::emitFunctionBodyStart() {
+  UsesImag32 |= MF->getInfo<MOSFunctionInfo>()->UsesImag32;
+}
+
+void MOSAsmPrinter::emitEndOfAsmFile(Module &M) {
+  if (!UsesImag32)
+    return;
+
+  // Keep section GC from discarding the linker-layout check.
+  OutStreamer->switchSection(OutContext.getELFSection(
+      ".mos.imag32", ELF::SHT_PROGBITS,
+      ELF::SHF_ALLOC | ELF::SHF_GNU_RETAIN | ELF::SHF_GROUP, 0,
+      "__mos_imag32_requirement", true));
+  OutStreamer->emitValue(
+      MCSymbolRefExpr::create(
+          OutContext.getOrCreateSymbol("__mos_imag32_contiguous"), OutContext),
+      1);
 }
 
 void MOSAsmPrinter::emitJumpTableInfo() {

@@ -1221,9 +1221,9 @@ body: |
     ; CHECK-NEXT: [[COPY3:%[0-9]+]]:_(s8) = COPY [[DEF]](s8)
     ; CHECK-NEXT: [[COPY4:%[0-9]+]]:_(s8) = COPY [[DEF]](s8)
     ; CHECK-NEXT: $a = COPY [[COPY]](s8)
-    ; CHECK-NEXT: $x = COPY [[COPY3]](s8)
-    ; CHECK-NEXT: $rc2 = COPY [[COPY4]](s8)
-    ; CHECK-NEXT: $rc3 = COPY [[DEF]](s8)
+    ; CHECK-NEXT: $x = COPY [[DEF]](s8)
+    ; CHECK-NEXT: $rc2 = COPY [[COPY3]](s8)
+    ; CHECK-NEXT: $rc3 = COPY [[COPY4]](s8)
     ; CHECK-NEXT: $rc4 = COPY [[COPY1]](s8)
     ; CHECK-NEXT: JSR &__ashlsi3, mos_csr, implicit $a, implicit $x, implicit $rc2, implicit $rc3, implicit $rc4, implicit-def $a, implicit-def $x, implicit-def $rc2, implicit-def $rc3
     ; CHECK-NEXT: [[COPY5:%[0-9]+]]:_(s8) = COPY $a
@@ -1326,9 +1326,9 @@ body: |
     ; CHECK-NEXT: [[COPY3:%[0-9]+]]:_(s8) = COPY [[DEF]](s8)
     ; CHECK-NEXT: [[COPY4:%[0-9]+]]:_(s8) = COPY [[DEF]](s8)
     ; CHECK-NEXT: $a = COPY [[COPY]](s8)
-    ; CHECK-NEXT: $x = COPY [[COPY3]](s8)
-    ; CHECK-NEXT: $rc2 = COPY [[COPY4]](s8)
-    ; CHECK-NEXT: $rc3 = COPY [[DEF]](s8)
+    ; CHECK-NEXT: $x = COPY [[DEF]](s8)
+    ; CHECK-NEXT: $rc2 = COPY [[COPY3]](s8)
+    ; CHECK-NEXT: $rc3 = COPY [[COPY4]](s8)
     ; CHECK-NEXT: $rc4 = COPY [[COPY1]](s8)
     ; CHECK-NEXT: JSR &__ashlsi3, mos_csr, implicit $a, implicit $x, implicit $rc2, implicit $rc3, implicit $rc4, implicit-def $a, implicit-def $x, implicit-def $rc2, implicit-def $rc3
     ; CHECK-NEXT: [[COPY5:%[0-9]+]]:_(s8) = COPY $a

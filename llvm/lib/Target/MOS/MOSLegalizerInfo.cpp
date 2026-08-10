@@ -125,9 +125,11 @@ MOSLegalizerInfo::MOSLegalizerInfo(const MOSSubtarget &STI) {
 
   getActionDefinitionsBuilder(G_MERGE_VALUES)
       .legalForCartesianProduct({S16, P}, {S8, PZ})
+      .legalFor({{S32, S8}})
       .unsupported();
   getActionDefinitionsBuilder(G_UNMERGE_VALUES)
       .legalForCartesianProduct({S8, PZ}, {S16, P})
+      .legalFor({{S8, S32}})
       .unsupported();
 
   getActionDefinitionsBuilder(G_BSWAP)

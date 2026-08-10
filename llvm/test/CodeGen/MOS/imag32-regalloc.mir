@@ -1,0 +1,213 @@
+# RUN: llc -mtriple=mos -start-before=greedy -verify-machineinstrs -o - %s | FileCheck %s
+
+--- |
+  target triple = "mos"
+
+  define void @four_slots() {
+    unreachable
+  }
+
+  define void @pressure_static() #0 {
+    unreachable
+  }
+
+  define void @pressure_soft() {
+    unreachable
+  }
+
+  define void @across_call() {
+    unreachable
+  }
+
+  define void @across_call_two() {
+    unreachable
+  }
+
+  attributes #0 = { "nonreentrant" }
+...
+---
+name: four_slots
+legalized: true
+regBankSelected: true
+selected: true
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: imag32 }
+  - { id: 1, class: imag32 }
+  - { id: 2, class: imag32 }
+  - { id: 3, class: imag32 }
+body: |
+  bb.0:
+    ; CHECK-LABEL: four_slots:
+    ; CHECK: ; four __rc4 __rc12 __rc20 __rc24
+    INLINEASM &"", sideeffect attdialect, regdef:Imag32, def %0
+    INLINEASM &"", sideeffect attdialect, regdef:Imag32, def %1
+    INLINEASM &"", sideeffect attdialect, regdef:Imag32, def %2
+    INLINEASM &"", sideeffect attdialect, regdef:Imag32, def %3
+    INLINEASM &"; four $0 $1 $2 $3", sideeffect attdialect, reguse:Imag32, %0, reguse:Imag32, %1, reguse:Imag32, %2, reguse:Imag32, %3
+    RTS
+...
+---
+name: pressure_static
+legalized: true
+regBankSelected: true
+selected: true
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: imag32 }
+  - { id: 1, class: imag32 }
+  - { id: 2, class: imag32 }
+  - { id: 3, class: imag32 }
+  - { id: 4, class: imag32 }
+body: |
+  bb.0:
+    ; CHECK-LABEL: pressure_static:
+    ; CHECK: ; def __rc4
+    ; CHECK: ; def __rc12
+    ; CHECK: ; def __rc20
+    ; CHECK: ; def __rc24
+    ; CHECK: stx .Lpressure_static_sstk
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: stx .Lpressure_static_sstk+1
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: stx .Lpressure_static_sstk+2
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: stx .Lpressure_static_sstk+3
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: ldx .Lpressure_static_sstk
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: ldx .Lpressure_static_sstk+1
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: ldx .Lpressure_static_sstk+2
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: ldx .Lpressure_static_sstk+3
+    ; CHECK-SAME: 1-byte Folded Reload
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %0
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %1
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %2
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %3
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %4
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %0
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %1
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %2
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %3
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %4
+    RTS
+...
+---
+name: pressure_soft
+legalized: true
+regBankSelected: true
+selected: true
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: imag32 }
+  - { id: 1, class: imag32 }
+  - { id: 2, class: imag32 }
+  - { id: 3, class: imag32 }
+  - { id: 4, class: imag32 }
+body: |
+  bb.0:
+    ; CHECK-LABEL: pressure_soft:
+    ; CHECK: ; def __rc4
+    ; CHECK: ; def __rc12
+    ; CHECK: ; def __rc20
+    ; CHECK: ; def __rc24
+    ; CHECK: sta (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: sta (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: sta (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: sta (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: lda (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: lda (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: lda (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: lda (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Reload
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %0
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %1
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %2
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %3
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %4
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %0
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %1
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %2
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %3
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %4
+    RTS
+...
+---
+name: across_call
+legalized: true
+regBankSelected: true
+selected: true
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: imag32 }
+  - { id: 1, class: imag32 }
+  - { id: 2, class: imag32 }
+body: |
+  bb.0:
+    ; CHECK-LABEL: across_call:
+    ; CHECK: ; def __rc20
+    ; CHECK: ; def __rc24
+    ; CHECK: ; def __rc4
+    ; CHECK: sta (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: sta (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: sta (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: sta (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Spill
+    ; CHECK: jsr callee
+    ; CHECK: ; use __rc20
+    ; CHECK: ; use __rc24
+    ; CHECK: lda (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: lda (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: lda (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Reload
+    ; CHECK: lda (__rc0),y
+    ; CHECK-SAME: 1-byte Folded Reload
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %0
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %1
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %2
+    JSR &callee, mos_csr
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %0
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %1
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %2
+    RTS
+...
+---
+name: across_call_two
+legalized: true
+regBankSelected: true
+selected: true
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: imag32 }
+  - { id: 1, class: imag32 }
+body: |
+  bb.0:
+    ; CHECK-LABEL: across_call_two:
+    ; CHECK: ; def __rc20
+    ; CHECK: ; def __rc24
+    ; CHECK-NOT: Folded Spill
+    ; CHECK: jsr callee
+    ; CHECK-NOT: Folded Reload
+    ; CHECK: ; use __rc20
+    ; CHECK: ; use __rc24
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %0
+    INLINEASM &"; def $0", sideeffect attdialect, regdef:Imag32, def %1
+    JSR &callee, mos_csr
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %0
+    INLINEASM &"; use $0", sideeffect attdialect, reguse:Imag32, %1
+    RTS
+...

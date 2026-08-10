@@ -223,7 +223,7 @@ def AddrHistk : MOSPseudo {
 // mechanisms to keep a pointer register free than to scramble at the last
 // second to scavenge one up.
 
-// Loads a value (1, 8, or 16 bits) from the soft stack. Eliminated once the
+// Loads a value (1, 8, 16, or 32 bits) from the soft stack. Eliminated once the
 // offset from the frame register is known.
 def LDStk : MOSPseudo {
   dag OutOperandList = (outs unknown:$dst, Imag16:$scratch);
@@ -233,7 +233,7 @@ def LDStk : MOSPseudo {
   let mayLoad = true;
 }
 
-// Stores a value (1, 8, or 16 bits) to the soft stack. Eliminated once the
+// Stores a value (1, 8, 16, or 32 bits) to the soft stack. Eliminated once the
 // offset from the frame register is known.
 def STStk : MOSPseudo {
   dag OutOperandList = (outs Imag16:$scratch);

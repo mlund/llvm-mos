@@ -52,7 +52,7 @@ MOSRegisterInfo::MOSRegisterInfo()
     // Pointers are referred to by their low byte in the addressing modes that
     // use them.
     unsigned R = Reg;
-    if (MOS::Imag32RegClass.contains(R))
+    if (MOS::Imag32AllRegClass.contains(R))
       R = getSubReg(R, MOS::sublo16);
     if (MOS::Imag16RegClass.contains(R))
       R = getSubReg(R, MOS::sublo);
@@ -73,6 +73,14 @@ MOSRegisterInfo::MOSRegisterInfo()
 
   // Reserve one temporary register for use by register scavenger.
   reserveAllSubregs(&Reserved, MOS::RS8);
+
+#ifndef NDEBUG
+  for (MCPhysReg Reg : MOS::Imag32RegClass) {
+    for (MCRegAliasIterator Alias(Reg, this, true); Alias.isValid(); ++Alias)
+      assert(!Reserved.test(*Alias) &&
+             "Allocatable Imag32 aliases a reserved register");
+  }
+#endif
 }
 
 const MCPhysReg *
@@ -460,6 +468,35 @@ void MOSRegisterInfo::expandLDSTStk(MachineBasicBlock::iterator MI) const {
     expandAddrLostk(Lo);
     expandAddrHistk(Hi);
     expandLDSTStk(MI);
+    return;
+  }
+
+  if (MOS::Imag32AllRegClass.contains(Loc)) {
+    if (!IsLoad)
+      Builder.buildInstr(MOS::KILL, {Loc}, {Loc});
+    Register Lo = TRI.getSubReg(Loc, MOS::sublo16);
+    Register Hi = TRI.getSubReg(Loc, MOS::subhi16);
+    auto LoInstr = Builder.buildInstr(MI->getOpcode());
+    if (!IsLoad)
+      LoInstr.add(MI->getOperand(0));
+    LoInstr.addReg(Lo, getDefRegState(IsLoad));
+    if (IsLoad)
+      LoInstr.add(MI->getOperand(1));
+    LoInstr.add(MI->getOperand(2))
+        .add(MI->getOperand(3))
+        .addMemOperand(MF.getMachineMemOperand(*MI->memoperands_begin(), 0, 2));
+    auto HiInstr = Builder.buildInstr(MI->getOpcode());
+    if (!IsLoad)
+      HiInstr.add(MI->getOperand(0));
+    HiInstr.addReg(Hi, getDefRegState(IsLoad));
+    if (IsLoad)
+      HiInstr.add(MI->getOperand(1));
+    HiInstr.add(MI->getOperand(2))
+        .addImm(MI->getOperand(3).getImm() + 2)
+        .addMemOperand(MF.getMachineMemOperand(*MI->memoperands_begin(), 2, 2));
+    MI->eraseFromParent();
+    expandLDSTStk(LoInstr);
+    expandLDSTStk(HiInstr);
     return;
   }
 
@@ -997,7 +1034,7 @@ MOSInstrCost MOSRegisterInfo::copyCost(Register DestReg, Register SrcReg,
   if (AreClasses(MOS::Imag16RegClass, MOS::Imag16RegClass)) {
     return copyCost(MOS::RC0, MOS::RC1, STI) * 2;
   }
-  if (AreClasses(MOS::Imag32RegClass, MOS::Imag32RegClass)) {
+  if (AreClasses(MOS::Imag32AllRegClass, MOS::Imag32AllRegClass)) {
     return copyCost(MOS::RC0, MOS::RC1, STI) * 4;
   }
   if (AreClasses(MOS::Anyi1RegClass, MOS::Anyi1RegClass)) {

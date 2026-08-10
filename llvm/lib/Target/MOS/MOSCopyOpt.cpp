@@ -229,7 +229,7 @@ bool MOSCopyOpt::runOnMachineFunction(MachineFunction &MF) {
       auto [Dst, Src] = MI.getFirst2Regs();
       auto LdImmCostVal = MOSInstrCost(2, 2).value(CostMode);
 
-      if (!MOS::Imag32RegClass.contains(Dst) &&
+      if (!MOS::Imag32AllRegClass.contains(Dst) &&
           !MOS::Imag16RegClass.contains(Dst) && Dst != MOS::C &&
           Dst != MOS::V &&
           TRI.copyCost(Dst, Src, STI).value(CostMode) <= LdImmCostVal)

@@ -391,7 +391,7 @@ bool MOSZeroPageAlloc::runOnModule(Module &M) {
               CSRZPOffsets[TRI.getSubReg(Reg, MOS::sublo)] = Offset++;
           CSRZPOffsets[TRI.getSubReg(Reg, MOS::subhi)] = Offset++;
         };
-        if (MOS::Imag32RegClass.contains(Cand->CSR)) {
+        if (MOS::Imag32AllRegClass.contains(Cand->CSR)) {
           Register Lo = TRI.getSubReg(Cand->CSR, MOS::sublo16);
           Register Hi = TRI.getSubReg(Cand->CSR, MOS::subhi16);
           CSRZPOffsets[Cand->CSR] = Offset;
@@ -599,10 +599,10 @@ void MOSZeroPageAlloc::collectCandidates(
           TRI.getMatchingSuperReg(Reg, MOS::subhi, &MOS::Imag16RegClass);
     assert(MOS::Imag16RegClass.contains(Imag16));
     Register Imag32 =
-        TRI.getMatchingSuperReg(Imag16, MOS::sublo16, &MOS::Imag32RegClass);
+        TRI.getMatchingSuperReg(Imag16, MOS::sublo16, &MOS::Imag32AllRegClass);
     if (!Imag32)
       Imag32 = TRI.getMatchingSuperReg(Imag16, MOS::subhi16,
-                                       &MOS::Imag32RegClass);
+                                       &MOS::Imag32AllRegClass);
     if (Imag32 && !MF.getRegInfo().reg_nodbg_empty(Imag32)) {
       if (Imag32Regs.contains(Imag32))
         continue;

@@ -203,10 +203,11 @@ let isPressureFineGrained = true in {
 }
 def Imag8 : MOSReg8Class<(sequence "RC%u", 0, !add(MaxImag8Regs, -1))>;
 def Imag16 : MOSReg16Class<(sequence "RS%u", 0, !add(MaxImag16Regs, -1))>;
-// Linker scripts may place adjacent RS registers apart, so RL cannot be
-// allocated safely.
+// Keep every physical quad representable without making split layouts usable.
 let isAllocatable = false in
-def Imag32 : MOSReg32Class<(sequence "RL%u", 0, !add(MaxImag32Regs, -1))>;
+def Imag32All : MOSReg32Class<(sequence "RL%u", 0, !add(MaxImag32Regs, -1))>;
+// Only quads contiguous in every supported linker layout are allocatable.
+def Imag32 : MOSReg32Class<(add RL1, RL3, RL5, RL6)>;
 
 // Instruction-specific register classes.
 def AImag8 : MOSReg8Class<(add Imag8, A)>;

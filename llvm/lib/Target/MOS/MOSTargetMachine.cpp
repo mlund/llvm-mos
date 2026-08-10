@@ -43,6 +43,7 @@
 #include "MOSLowerSelect.h"
 #include "MOSMachineFunctionInfo.h"
 #include "MOSMachineScheduler.h"
+#include "MOSMarkImag32.h"
 #include "MOSNonReentrant.h"
 #include "MOSPostRAScavenging.h"
 #include "MOSShiftRotateChain.h"
@@ -65,6 +66,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeMOSTarget() {
   initializeMOSInternalizePass(PR);
   initializeMOSLateOptimizationPass(PR);
   initializeMOSLowerSelectPass(PR);
+  initializeMOSMarkImag32Pass(PR);
   initializeMOSNonReentrantPass(PR);
   initializeMOSPostRAScavengingPass(PR);
   initializeMOSShiftRotateChainPass(PR);
@@ -302,6 +304,7 @@ void MOSPassConfig::addMachineLateOptimization() {
 void MOSPassConfig::addPrePEI() {
   if (getOptLevel() != CodeGenOptLevel::None)
     addPass(createMOSZeroPageAllocPass());
+  addPass(createMOSMarkImag32Pass());
 }
 
 void MOSPassConfig::addPreSched2() {
