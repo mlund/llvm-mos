@@ -174,7 +174,7 @@ bool MOSAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
       size_t Offset = It->second;
       if (Offset)
         OS << '+' << Offset;
-      OS << ")\n";
+      OS << ')';
       break;
     }
 
