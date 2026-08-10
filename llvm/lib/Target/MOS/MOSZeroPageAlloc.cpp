@@ -594,10 +594,10 @@ void MOSZeroPageAlloc::collectCandidates(
 
       // Account for the second byte.
       if (Idx++ < 4) {
-        Benefit = 9 * SaveFreq;      // LDA ZP,PHA
+        Benefit += 9 * SaveFreq;     // LDA ZP,PHA
         Benefit += 10 * RestoreFreq; // PLA,STA ZP
       } else {
-        Benefit = 12 * SaveFreq;     // LDA ZP,STA ABS
+        Benefit += 12 * SaveFreq;    // LDA ZP,STA ABS
         Benefit += 12 * RestoreFreq; // LDA ABS,STA ZP
       }
       ++Size;
