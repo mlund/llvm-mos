@@ -1344,7 +1344,7 @@ void MOSInstrInfo::expandCmpBr(MachineIRBuilder &Builder) const {
     CMP.addDef(MOS::C, RegState::Dead);
   for (unsigned I = 3, E = MI.getNumOperands(); I != E; I++)
     CMP.add(MI.getOperand(I));
-  CMP.cloneMemRefs(*CMP);
+  CMP.cloneMemRefs(MI);
   CMP.addDef(Flag, RegState::Implicit);
 
   Builder.buildInstr(MOS::BR)

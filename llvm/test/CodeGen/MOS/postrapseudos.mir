@@ -119,10 +119,10 @@ body: |
     ; CHECK-LABEL: name: cmpbrabs
     ; CHECK: successors: %bb.0(0x80000000)
     ; CHECK-NEXT: {{  $}}
-    ; CHECK-NEXT: dead $c = CMPAbs $a, 1234, implicit-def $c, implicit-def $z
+    ; CHECK-NEXT: dead $c = CMPAbs $a, 1234, implicit-def $c, implicit-def $z :: (volatile load (s8))
     ; CHECK-NEXT: BR %bb.0, killed $z, 1
     ; CHECK-NEXT: RTS
-    CmpBrAbs %bb.0, undef $z, 1, $a, 1234, implicit-def $c
+    CmpBrAbs %bb.0, undef $z, 1, $a, 1234, implicit-def $c :: (volatile load (s8))
     RTS
 ...
 ---

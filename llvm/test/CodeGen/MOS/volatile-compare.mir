@@ -1,0 +1,275 @@
+# RUN: llc -mtriple=mos -run-pass=instruction-select -verify-machineinstrs -o - %s | FileCheck %s
+# RUN: llc -mtriple=mos -mcpu=moshuc6280 -run-pass=instruction-select -verify-machineinstrs -o - %s | FileCheck %s
+# RUN: llc -mtriple=mos -mcpu=mosspc700 -run-pass=instruction-select -verify-machineinstrs -o - %s | FileCheck %s
+
+---
+name: cmp_abs_live_result
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: cmp_abs_live_result
+    ; CHECK: [[LHS:%[0-9]+]]:{{[a-z0-9]+}} = LDAbs i16 1234 :: (volatile load (s8))
+    ; CHECK-NEXT: [[RHS_GPR:%[0-9]+]]:gpr = LDAbs i16 1235 :: (volatile load (s8))
+    ; CHECK-NEXT: [[RHS:%[0-9]+]]:imag8 = COPY [[RHS_GPR]]
+    ; CHECK-NOT: CmpBrAbs
+    ; CHECK: CmpBrImag8 %bb.1, undef $z, 1, [[LHS]], [[RHS]]
+    %0:any(s8) = G_LOAD_ABS i16 1234 :: (volatile load (s8))
+    %1:any(s8) = G_LOAD_ABS i16 1235 :: (volatile load (s8))
+    %2:any(s1) = G_CONSTANT i1 true
+    %3:any(s8), %4:any(s1), %5:any(s1), %6:any(s1), %7:any(s1) = G_SBC %0, %1, %2
+    G_BRCOND_IMM %7(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.1:
+    $a = COPY %3(s8)
+    RTS implicit $a
+
+  bb.2:
+    $a = COPY %3(s8)
+    RTS implicit $a
+...
+---
+name: cmp_zp_idx
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: cmp_zp_idx
+    ; CHECK: [[LHS:%[0-9]+]]:ac = COPY $a
+    ; CHECK-NEXT: [[IDX:%[0-9]+]]:xc = COPY $x
+    ; CHECK-NEXT: CmpBrZpIdx %bb.0, undef $z, 1, [[LHS]], i8 123, [[IDX]], implicit-def $c :: (volatile load (s8))
+    %0:any(s8) = COPY $a
+    %1:any(s8) = COPY $x
+    %2:any(s8) = G_LOAD_ZP_IDX i8 123, %1 :: (volatile load (s8))
+    %3:any(s1) = G_CONSTANT i1 true
+    %4:any(s8), %5:any(s1), %6:any(s1), %7:any(s1), %8:any(s1) = G_SBC %0, %2, %3
+    G_BRCOND_IMM %8(s1), %bb.0, 1
+    RTS
+...
+---
+name: cmp_indir
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: cmp_indir
+    ; CHECK: [[LHS:%[0-9]+]]:ac = COPY $a
+    ; CHECK-NEXT: [[ADDR:%[0-9]+]]:imag16 = COPY $rs1
+    ; CHECK-NEXT: CmpBrIndir %bb.0, undef $z, 1, [[LHS]], [[ADDR]], implicit-def $c :: (volatile load (s8))
+    %0:any(s8) = COPY $a
+    %1:any(s16) = COPY $rs1
+    %2:any(s8) = G_LOAD_INDIR %1 :: (volatile load (s8))
+    %3:any(s1) = G_CONSTANT i1 true
+    %4:any(s8), %5:any(s1), %6:any(s1), %7:any(s1), %8:any(s1) = G_SBC %0, %2, %3
+    G_BRCOND_IMM %8(s1), %bb.0, 1
+    RTS
+...
+---
+name: cmp_abs_copy
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: cmp_abs_copy
+    ; CHECK: [[LHS:%[0-9]+]]:{{[a-z0-9]+}} = COPY $a
+    ; CHECK-NEXT: CmpBrAbs %bb.0, undef $z, 1, [[LHS]], i16 1234, implicit-def $c :: (volatile load (s8))
+    %0:any(s8) = COPY $a
+    %1:any(s8) = G_LOAD_ABS i16 1234 :: (volatile load (s8))
+    %2:any(s1) = G_CONSTANT i1 true
+    %3:any(s8), %4:any(s1), %5:any(s1), %6:any(s1), %7:any(s1) = G_SBC %0, %1, %2
+    %8:any(s1) = COPY %7
+    G_BRCOND_IMM %8(s1), %bb.0, 1
+    RTS
+...
+---
+name: cmp_abs_idx
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: cmp_abs_idx
+    ; CHECK: [[LHS:%[0-9]+]]:{{[a-z0-9]+}} = LDAbs i16 1234 :: (volatile load (s8))
+    ; CHECK-NOT: LDAbsIdx
+    ; CHECK: CmpBrAbsIdx %bb.1, undef $z, 1, [[LHS]], i16 1235, $x, implicit-def $c :: (volatile load (s8))
+    %0:any(s8) = G_LOAD_ABS i16 1234 :: (volatile load (s8))
+    %1:any(s8) = G_LOAD_ABS_IDX i16 1235, $x :: (volatile load (s8))
+    %2:any(s1) = G_CONSTANT i1 true
+    %3:any(s8), %4:any(s1), %5:any(s1), %6:any(s1), %7:any(s1) = G_SBC %0, %1, %2
+    G_BRCOND_IMM %7(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.1:
+    RTS
+
+  bb.2:
+    RTS
+...
+---
+name: cmp_abs_intervening_load
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: cmp_abs_intervening_load
+    ; CHECK: [[LHS:%[0-9]+]]:{{[a-z0-9]+}} = LDAbs i16 1234 :: (volatile load (s8))
+    ; CHECK-NEXT: [[RHS_GPR:%[0-9]+]]:gpr = LDAbs i16 1235 :: (volatile load (s8))
+    ; CHECK-NEXT: [[RHS:%[0-9]+]]:imag8 = COPY [[RHS_GPR]]
+    ; CHECK: LDAbs i16 1236 :: (volatile load (s8))
+    ; CHECK-NOT: CmpBrAbs
+    ; CHECK: CmpBrImag8 %bb.1, undef $z, 1, [[LHS]], [[RHS]]
+    %0:any(s8) = G_LOAD_ABS i16 1234 :: (volatile load (s8))
+    %1:any(s8) = G_LOAD_ABS i16 1235 :: (volatile load (s8))
+    %2:any(s8) = G_LOAD_ABS i16 1236 :: (volatile load (s8))
+    %3:any(s1) = G_CONSTANT i1 true
+    %4:any(s8), %5:any(s1), %6:any(s1), %7:any(s1), %8:any(s1) = G_SBC %0, %1, %3
+    G_BRCOND_IMM %8(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.1:
+    $a = COPY %2(s8)
+    RTS implicit $a
+
+  bb.2:
+    $a = COPY %2(s8)
+    RTS implicit $a
+...
+---
+name: nonvolatile_through_copy
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: nonvolatile_through_copy
+    ; CHECK: CmpBrAbs %bb.1, undef $z, 1, {{%[0-9]+}}, i16 1234, implicit-def $c :: (load (s8))
+    %0:any(s8) = COPY $a
+    %1:any(s8) = G_LOAD_ABS i16 1234 :: (load (s8))
+    %2:any(s8) = COPY %1
+    %3:any(s1) = G_CONSTANT i1 true
+    %4:any(s8), %5:any(s1), %6:any(s1), %7:any(s1), %8:any(s1) = G_SBC %0, %2, %3
+    G_BRCOND_IMM %8(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.1:
+    RTS
+
+  bb.2:
+    RTS
+...
+---
+name: cmp_same_volatile_load
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: cmp_same_volatile_load
+    ; CHECK: [[VALUE:%[0-9]+]]:gpr = LDAbs i16 1234 :: (volatile load (s8))
+    ; CHECK-NOT: CmpBrAbs
+    ; CHECK: CmpBrImag8 %bb.1, undef $z, 1, [[VALUE]],
+    %0:any(s8) = G_LOAD_ABS i16 1234 :: (volatile load (s8))
+    %1:any(s1) = G_CONSTANT i1 true
+    %2:any(s8), %3:any(s1), %4:any(s1), %5:any(s1), %6:any(s1) = G_SBC %0, %0, %1
+    G_BRCOND_IMM %6(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.1:
+    RTS
+
+  bb.2:
+    RTS
+...
+---
+name: cmp_branch_in_other_block
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: cmp_branch_in_other_block
+    ; CHECK: [[RHS_GPR:%[0-9]+]]:gpr = LDAbs i16 1234 :: (volatile load (s8))
+    ; CHECK: [[RHS:%[0-9]+]]:imag8 = COPY [[RHS_GPR]]
+    ; CHECK-NOT: CmpBrAbs
+    ; CHECK: CmpBrImag8 %bb.1, undef $z, 1, {{%[0-9]+}}, [[RHS]]
+    %0:any(s8) = COPY $a
+    %1:any(s8) = G_LOAD_ABS i16 1234 :: (volatile load (s8))
+    %2:any(s1) = G_CONSTANT i1 true
+    %3:any(s8), %4:any(s1), %5:any(s1), %6:any(s1), %7:any(s1) = G_SBC %0, %1, %2
+    G_BR %bb.1
+
+  bb.1:
+    G_BRCOND_IMM %7(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.2:
+    RTS
+...
+---
+name: nonvolatile_through_copy_carry
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: nonvolatile_through_copy_carry
+    ; CHECK: {{%[0-9]+}}:cc = CMPAbs {{%[0-9]+}}, i16 1234 :: (load (s8))
+    %0:any(s8) = COPY $a
+    %1:any(s8) = G_LOAD_ABS i16 1234 :: (load (s8))
+    %2:any(s8) = COPY %1
+    %3:any(s1) = G_CONSTANT i1 true
+    %4:any(s8), %5:any(s1), %6:any(s1), %7:any(s1), %8:any(s1) = G_SBC %0, %2, %3
+    G_BRCOND_IMM %5(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.1:
+    RTS
+
+  bb.2:
+    RTS
+...
+---
+name: volatile_through_copy
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: volatile_through_copy
+    ; CHECK: [[LHS:%[0-9]+]]:{{[a-z0-9]+}} = COPY $a
+    ; CHECK-NEXT: CmpBrAbs %bb.1, undef $z, 1, [[LHS]], i16 1234, implicit-def $c :: (volatile load (s8))
+    %0:any(s8) = COPY $a
+    %1:any(s8) = G_LOAD_ABS i16 1234 :: (volatile load (s8))
+    %2:any(s8) = COPY %1
+    %3:any(s1) = G_CONSTANT i1 true
+    %4:any(s8), %5:any(s1), %6:any(s1), %7:any(s1), %8:any(s1) = G_SBC %0, %2, %3
+    G_BRCOND_IMM %8(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.1:
+    RTS
+
+  bb.2:
+    RTS
+...
+---
+name: volatile_copy_fanout
+legalized: true
+regBankSelected: true
+body: |
+  bb.0:
+    ; CHECK-LABEL: name: volatile_copy_fanout
+    ; CHECK: [[LOADED:%[0-9]+]]:gpr = LDAbs i16 1234 :: (volatile load (s8))
+    ; CHECK: [[COPIED:%[0-9]+]]:imag8 = COPY [[LOADED]]
+    ; CHECK-NOT: CmpBrAbs
+    ; CHECK: CmpBrImag8 %bb.1, undef $z, 1, {{%[0-9]+}}, [[COPIED]]
+    %0:any(s8) = COPY $a
+    %1:any(s8) = G_LOAD_ABS i16 1234 :: (volatile load (s8))
+    %2:any(s8) = COPY %1
+    %3:any(s1) = G_CONSTANT i1 true
+    %4:any(s8), %5:any(s1), %6:any(s1), %7:any(s1), %8:any(s1) = G_SBC %0, %2, %3
+    $a = COPY %2
+    G_BRCOND_IMM %8(s1), %bb.1, 1
+    G_BR %bb.2
+
+  bb.1:
+    RTS
+
+  bb.2:
+    RTS
+...

@@ -261,15 +261,34 @@ bool MOSInstructionSelector::select(MachineInstr &MI) {
   }
 }
 
+// getOpcodeDef() looks through copies, so every link must be single-use before
+// erasing a volatile load.
+static bool hasOneUseAlongCopyChain(Register Reg, const MachineInstr &Src,
+                                    const MachineRegisterInfo &MRI) {
+  while (true) {
+    if (!MRI.hasOneNonDBGUse(Reg))
+      return false;
+    MachineInstr *Def = MRI.getVRegDef(Reg);
+    if (Def == &Src)
+      return true;
+    if (!Def || !Def->isCopy())
+      return false;
+    Reg = Def->getOperand(1).getReg();
+  }
+}
+
 static bool shouldFoldMemAccess(const MachineInstr &Dst,
-                                const MachineInstr &Src, AAResults *AA) {
+                                const MachineInstr &Src, Register FoldedReg,
+                                AAResults *AA,
+                                bool CallerErasesVolatile = false) {
   assert(Src.mayLoadOrStore());
 
   // For now, don't attempt to fold across basic block boundaries.
   if (Dst.getParent() != Src.getParent())
     return false;
 
-  if ((*Src.memoperands_begin())->isVolatile())
+  const bool IsVolatile = (*Src.memoperands_begin())->isVolatile();
+  if (IsVolatile && !CallerErasesVolatile)
     return false;
 
   // Does it pay off to fold the access? Depends on the number of users.
@@ -277,6 +296,10 @@ static bool shouldFoldMemAccess(const MachineInstr &Dst,
   const auto &MRI = Dst.getMF()->getRegInfo();
   const auto Users = MRI.use_nodbg_instructions(Src.getOperand(0).getReg());
   const auto NumUsers = std::distance(Users.begin(), Users.end());
+
+  // A folded volatile access must execute exactly once.
+  if (IsVolatile && !hasOneUseAlongCopyChain(FoldedReg, Src, MRI))
+    return false;
 
   // Looking at this pessimistically, if we don't fold the access, all
   // references may refer to an Imag8 reg that needs to be copied to/from a GPR.
@@ -340,22 +363,30 @@ static bool shouldFoldMemAccess(const MachineInstr &Dst,
   return true;
 }
 
+// MatchedLoad returns the actual load hidden by any copies.
 struct FoldedLdAbs_match {
   const MachineInstr &Tgt;
   MachineOperand &Addr;
   AAResults *AA;
+  bool CallerErasesVolatile;
+  MachineInstr **MatchedLoad;
 
   bool match(const MachineRegisterInfo &MRI, Register Reg) {
-    const MachineInstr *LdAbs = getOpcodeDef(MOS::G_LOAD_ABS, Reg, MRI);
-    if (!LdAbs || !shouldFoldMemAccess(Tgt, *LdAbs, AA))
+    MachineInstr *LdAbs = getOpcodeDef(MOS::G_LOAD_ABS, Reg, MRI);
+    if (!LdAbs ||
+        !shouldFoldMemAccess(Tgt, *LdAbs, Reg, AA, CallerErasesVolatile))
       return false;
     Addr = LdAbs->getOperand(1);
+    if (MatchedLoad)
+      *MatchedLoad = LdAbs;
     return true;
   }
 };
 inline FoldedLdAbs_match m_FoldedLdAbs(const MachineInstr &Tgt,
-                                       MachineOperand &Addr, AAResults *AA) {
-  return {Tgt, Addr, AA};
+                                       MachineOperand &Addr, AAResults *AA,
+                                       bool CallerErasesVolatile = false,
+                                       MachineInstr **MatchedLoad = nullptr) {
+  return {Tgt, Addr, AA, CallerErasesVolatile, MatchedLoad};
 }
 
 struct FoldedLdIdx_match {
@@ -364,25 +395,31 @@ struct FoldedLdIdx_match {
   Register &Idx;
   bool &ZP;
   AAResults *AA;
+  bool CallerErasesVolatile;
+  MachineInstr **MatchedLoad;
 
   bool match(const MachineRegisterInfo &MRI, Register Reg) {
-    const MachineInstr *LDZpIdx = getOpcodeDef(MOS::G_LOAD_ZP_IDX, Reg, MRI);
+    MachineInstr *LDZpIdx = getOpcodeDef(MOS::G_LOAD_ZP_IDX, Reg, MRI);
     if (LDZpIdx) {
-      if (!shouldFoldMemAccess(Tgt, *LDZpIdx, AA))
+      if (!shouldFoldMemAccess(Tgt, *LDZpIdx, Reg, AA, CallerErasesVolatile))
         return false;
       ZP = true;
       Addr = LDZpIdx->getOperand(1);
       Idx = LDZpIdx->getOperand(2).getReg();
+      if (MatchedLoad)
+        *MatchedLoad = LDZpIdx;
       return true;
     }
 
-    const MachineInstr *LDAbsIdx = getOpcodeDef(MOS::G_LOAD_ABS_IDX, Reg, MRI);
+    MachineInstr *LDAbsIdx = getOpcodeDef(MOS::G_LOAD_ABS_IDX, Reg, MRI);
     if (LDAbsIdx) {
-      if (!shouldFoldMemAccess(Tgt, *LDAbsIdx, AA))
+      if (!shouldFoldMemAccess(Tgt, *LDAbsIdx, Reg, AA, CallerErasesVolatile))
         return false;
       ZP = false;
       Addr = LDAbsIdx->getOperand(1);
       Idx = LDAbsIdx->getOperand(2).getReg();
+      if (MatchedLoad)
+        *MatchedLoad = LDAbsIdx;
       return true;
     }
 
@@ -391,26 +428,35 @@ struct FoldedLdIdx_match {
 };
 inline FoldedLdIdx_match m_FoldedLdIdx(const MachineInstr &Tgt,
                                        MachineOperand &Addr, Register &Idx,
-                                       bool &ZP, AAResults *AA) {
-  return {Tgt, Addr, Idx, ZP, AA};
+                                       bool &ZP, AAResults *AA,
+                                       bool CallerErasesVolatile = false,
+                                       MachineInstr **MatchedLoad = nullptr) {
+  return {Tgt, Addr, Idx, ZP, AA, CallerErasesVolatile, MatchedLoad};
 }
 
 struct FoldedLdIndir_match {
   const MachineInstr &Tgt;
   Register &Addr;
   AAResults *AA;
+  bool CallerErasesVolatile;
+  MachineInstr **MatchedLoad;
 
   bool match(const MachineRegisterInfo &MRI, Register Reg) {
-    const MachineInstr *LdIndir = getOpcodeDef(MOS::G_LOAD_INDIR, Reg, MRI);
-    if (!LdIndir || !shouldFoldMemAccess(Tgt, *LdIndir, AA))
+    MachineInstr *LdIndir = getOpcodeDef(MOS::G_LOAD_INDIR, Reg, MRI);
+    if (!LdIndir ||
+        !shouldFoldMemAccess(Tgt, *LdIndir, Reg, AA, CallerErasesVolatile))
       return false;
     Addr = LdIndir->getOperand(1).getReg();
+    if (MatchedLoad)
+      *MatchedLoad = LdIndir;
     return true;
   }
 };
-inline FoldedLdIndir_match m_FoldedLdIndir(const MachineInstr &Tgt,
-                                           Register &Addr, AAResults *AA) {
-  return {Tgt, Addr, AA};
+inline FoldedLdIndir_match
+m_FoldedLdIndir(const MachineInstr &Tgt, Register &Addr, AAResults *AA,
+                bool CallerErasesVolatile = false,
+                MachineInstr **MatchedLoad = nullptr) {
+  return {Tgt, Addr, AA, CallerErasesVolatile, MatchedLoad};
 }
 
 struct FoldedLdIndirIdx_match {
@@ -418,21 +464,33 @@ struct FoldedLdIndirIdx_match {
   Register &Addr;
   Register &Idx;
   AAResults *AA;
+  bool CallerErasesVolatile;
+  MachineInstr **MatchedLoad;
 
   bool match(const MachineRegisterInfo &MRI, Register Reg) {
-    const MachineInstr *LdIndirIdx =
-        getOpcodeDef(MOS::G_LOAD_INDIR_IDX, Reg, MRI);
-    if (!LdIndirIdx || !shouldFoldMemAccess(Tgt, *LdIndirIdx, AA))
+    MachineInstr *LdIndirIdx = getOpcodeDef(MOS::G_LOAD_INDIR_IDX, Reg, MRI);
+    if (!LdIndirIdx ||
+        !shouldFoldMemAccess(Tgt, *LdIndirIdx, Reg, AA, CallerErasesVolatile))
       return false;
     Addr = LdIndirIdx->getOperand(1).getReg();
     Idx = LdIndirIdx->getOperand(2).getReg();
+    if (MatchedLoad)
+      *MatchedLoad = LdIndirIdx;
     return true;
   }
 };
-inline FoldedLdIndirIdx_match m_FoldedLdIndirIdx(const MachineInstr &Tgt,
-                                                 Register &Addr, Register &Idx,
-                                                 AAResults *AA) {
-  return {Tgt, Addr, Idx, AA};
+inline FoldedLdIndirIdx_match
+m_FoldedLdIndirIdx(const MachineInstr &Tgt, Register &Addr, Register &Idx,
+                   AAResults *AA, bool CallerErasesVolatile = false,
+                   MachineInstr **MatchedLoad = nullptr) {
+  return {Tgt, Addr, Idx, AA, CallerErasesVolatile, MatchedLoad};
+}
+
+static void eraseFoldedVolatileLoad(MachineInstr &Load) {
+  if ((*Load.memoperands_begin())->isVolatile()) {
+    salvageDebugInfo(Load.getMF()->getRegInfo(), Load);
+    Load.eraseFromParent();
+  }
 }
 
 bool MOSInstructionSelector::selectAddSub(MachineInstr &MI) {
@@ -765,6 +823,7 @@ struct CmpNZ_match {
 
   // The matched G_SBC representing a CMP.
   MachineInstr *CondMI;
+  Register CondSrcReg;
 
   CmpNZ_match(Register &LHS, Register &Flag) : LHS(LHS), Flag(Flag) {}
 
@@ -780,8 +839,30 @@ struct CmpNZ_match {
       return false;
 
     LHS = CondMI->getOperand(5).getReg();
+    CondSrcReg = DefSrcReg->Reg;
     Flag = getSbcFlagForRegister(*CondMI, DefSrcReg->Reg);
     return Flag == MOS::N || Flag == MOS::Z;
+  }
+
+  // A volatile fold must also eliminate the original compare.
+  bool canErase(const MachineRegisterInfo &MRI, Register CondReg) const {
+    Register Reg = CondReg;
+    while (Reg != CondSrcReg) {
+      if (!MRI.hasOneNonDBGUse(Reg))
+        return false;
+      MachineInstr *Def = MRI.getVRegDef(Reg);
+      if (Def->getOpcode() != TargetOpcode::COPY &&
+          !isPreISelGenericOptimizationHint(Def->getOpcode()))
+        return false;
+      Reg = Def->getOperand(1).getReg();
+    }
+    if (!MRI.hasOneNonDBGUse(CondSrcReg))
+      return false;
+
+    for (const MachineOperand &Def : CondMI->all_defs())
+      if (Def.getReg() != CondSrcReg && !MRI.use_nodbg_empty(Def.getReg()))
+        return false;
+    return true;
   }
 };
 
@@ -853,42 +934,17 @@ inline CmpNZImag8_match m_CmpNZImag8(Register &LHS, Register &RHS,
   return {LHS, RHS, Flag};
 }
 
+// Check memory-fold safety at the branch where the compare is emitted.
 struct CmpNZAbs_match : public CmpNZ_match {
+  const MachineInstr &InsertAt;
   MachineOperand &Addr;
   MachineInstr *&Load;
   AAResults *AA;
 
-  CmpNZAbs_match(Register &LHS, MachineOperand &Addr, Register &Flag,
-                 MachineInstr *&Load, AAResults *AA)
-      : CmpNZ_match(LHS, Flag), Addr(Addr), Load(Load), AA(AA) {}
-
-  bool match(const MachineRegisterInfo &MRI, Register CondReg) {
-    if (!CmpNZ_match::match(MRI, CondReg))
-      return false;
-    return mi_match(CondMI->getOperand(6).getReg(), MRI,
-                    m_all_of(m_MInstr(Load), m_FoldedLdAbs(*CondMI, Addr, AA)));
-  }
-};
-
-// Match one of the outputs of a G_SBC to a CmpNZAbs operation. Flag is the
-// physical (N or Z) register corresponding to the output by which the G_SBC
-// was reached.
-inline CmpNZAbs_match m_CmpNZAbs(Register &LHS, MachineOperand &Addr,
-                                 Register &Flag, MachineInstr *&Load,
-                                 AAResults *AA) {
-  return {LHS, Addr, Flag, Load, AA};
-}
-
-struct CmpNZIdx_match : public CmpNZ_match {
-  MachineOperand &Addr;
-  Register &Idx;
-  MachineInstr *&Load;
-  bool &ZP;
-  AAResults *AA;
-
-  CmpNZIdx_match(Register &LHS, MachineOperand &Addr, Register &Idx,
-                 Register &Flag, MachineInstr *&Load, bool &ZP, AAResults *AA)
-      : CmpNZ_match(LHS, Flag), Addr(Addr), Idx(Idx), Load(Load), ZP(ZP),
+  CmpNZAbs_match(const MachineInstr &InsertAt, Register &LHS,
+                 MachineOperand &Addr, Register &Flag, MachineInstr *&Load,
+                 AAResults *AA)
+      : CmpNZ_match(LHS, Flag), InsertAt(InsertAt), Addr(Addr), Load(Load),
         AA(AA) {}
 
   bool match(const MachineRegisterInfo &MRI, Register CondReg) {
@@ -896,72 +952,112 @@ struct CmpNZIdx_match : public CmpNZ_match {
       return false;
     return mi_match(
         CondMI->getOperand(6).getReg(), MRI,
-        m_all_of(m_MInstr(Load), m_FoldedLdIdx(*CondMI, Addr, Idx, ZP, AA)));
+        m_FoldedLdAbs(InsertAt, Addr, AA, canErase(MRI, CondReg), &Load));
+  }
+};
+
+// Match one of the outputs of a G_SBC to a CmpNZAbs operation. Flag is the
+// physical (N or Z) register corresponding to the output by which the G_SBC
+// was reached.
+inline CmpNZAbs_match m_CmpNZAbs(const MachineInstr &InsertAt, Register &LHS,
+                                 MachineOperand &Addr, Register &Flag,
+                                 MachineInstr *&Load, AAResults *AA) {
+  return {InsertAt, LHS, Addr, Flag, Load, AA};
+}
+
+struct CmpNZIdx_match : public CmpNZ_match {
+  const MachineInstr &InsertAt;
+  MachineOperand &Addr;
+  Register &Idx;
+  MachineInstr *&Load;
+  bool &ZP;
+  AAResults *AA;
+
+  CmpNZIdx_match(const MachineInstr &InsertAt, Register &LHS,
+                 MachineOperand &Addr, Register &Idx, Register &Flag,
+                 MachineInstr *&Load, bool &ZP, AAResults *AA)
+      : CmpNZ_match(LHS, Flag), InsertAt(InsertAt), Addr(Addr), Idx(Idx),
+        Load(Load), ZP(ZP), AA(AA) {}
+
+  bool match(const MachineRegisterInfo &MRI, Register CondReg) {
+    if (!CmpNZ_match::match(MRI, CondReg))
+      return false;
+    return mi_match(CondMI->getOperand(6).getReg(), MRI,
+                    m_FoldedLdIdx(InsertAt, Addr, Idx, ZP, AA,
+                                  canErase(MRI, CondReg), &Load));
   }
 };
 
 // Match one of the outputs of a G_SBC to a CmpNZIdx operation. Flag is the
 // physical (N or Z) register corresponding to the output by which the G_SBC
 // was reached.
-inline CmpNZIdx_match m_CmpNZIdx(Register &LHS, MachineOperand &Addr,
-                                 Register &Idx, Register &Flag,
-                                 MachineInstr *&Load, bool &ZP, AAResults *AA) {
-  return {LHS, Addr, Idx, Flag, Load, ZP, AA};
+inline CmpNZIdx_match m_CmpNZIdx(const MachineInstr &InsertAt, Register &LHS,
+                                 MachineOperand &Addr, Register &Idx,
+                                 Register &Flag, MachineInstr *&Load, bool &ZP,
+                                 AAResults *AA) {
+  return {InsertAt, LHS, Addr, Idx, Flag, Load, ZP, AA};
 }
 
 struct CmpNZIndir_match : public CmpNZ_match {
+  const MachineInstr &InsertAt;
   Register &Addr;
   MachineInstr *&Load;
   AAResults *AA;
 
-  CmpNZIndir_match(Register &LHS, Register &Addr, Register &Flag,
-                   MachineInstr *&Load, AAResults *AA)
-      : CmpNZ_match(LHS, Flag), Addr(Addr), Load(Load), AA(AA) {}
+  CmpNZIndir_match(const MachineInstr &InsertAt, Register &LHS, Register &Addr,
+                   Register &Flag, MachineInstr *&Load, AAResults *AA)
+      : CmpNZ_match(LHS, Flag), InsertAt(InsertAt), Addr(Addr), Load(Load),
+        AA(AA) {}
 
   bool match(const MachineRegisterInfo &MRI, Register CondReg) {
     if (!CmpNZ_match::match(MRI, CondReg))
       return false;
     return mi_match(
         CondMI->getOperand(6).getReg(), MRI,
-        m_all_of(m_MInstr(Load), m_FoldedLdIndir(*CondMI, Addr, AA)));
+        m_FoldedLdIndir(InsertAt, Addr, AA, canErase(MRI, CondReg), &Load));
   }
 };
 
 // Match one of the outputs of a G_SBC to a CmpNZIndir operation. Flag is the
 // physical (N or Z) register corresponding to the output by which the G_SBC
 // was reached.
-inline CmpNZIndir_match m_CmpNZIndir(Register &LHS, Register &Addr,
+inline CmpNZIndir_match m_CmpNZIndir(const MachineInstr &InsertAt,
+                                     Register &LHS, Register &Addr,
                                      Register &Flag, MachineInstr *&Load,
                                      AAResults *AA) {
-  return {LHS, Addr, Flag, Load, AA};
+  return {InsertAt, LHS, Addr, Flag, Load, AA};
 }
 
 struct CmpNZIndirIdx_match : public CmpNZ_match {
+  const MachineInstr &InsertAt;
   Register &Addr;
   Register &Idx;
   MachineInstr *&Load;
   AAResults *AA;
 
-  CmpNZIndirIdx_match(Register &LHS, Register &Addr, Register &Idx,
-                      Register &Flag, MachineInstr *&Load, AAResults *AA)
-      : CmpNZ_match(LHS, Flag), Addr(Addr), Idx(Idx), Load(Load), AA(AA) {}
+  CmpNZIndirIdx_match(const MachineInstr &InsertAt, Register &LHS,
+                      Register &Addr, Register &Idx, Register &Flag,
+                      MachineInstr *&Load, AAResults *AA)
+      : CmpNZ_match(LHS, Flag), InsertAt(InsertAt), Addr(Addr), Idx(Idx),
+        Load(Load), AA(AA) {}
 
   bool match(const MachineRegisterInfo &MRI, Register CondReg) {
     if (!CmpNZ_match::match(MRI, CondReg))
       return false;
-    return mi_match(
-        CondMI->getOperand(6).getReg(), MRI,
-        m_all_of(m_MInstr(Load), m_FoldedLdIndirIdx(*CondMI, Addr, Idx, AA)));
+    return mi_match(CondMI->getOperand(6).getReg(), MRI,
+                    m_FoldedLdIndirIdx(InsertAt, Addr, Idx, AA,
+                                       canErase(MRI, CondReg), &Load));
   }
 };
 
 // Match one of the outputs of a G_SBC to a CmpNZIndirIdx operation. Flag is
 // the physical (N or Z) register corresponding to the output by which the G_SBC
 // was reached.
-inline CmpNZIndirIdx_match m_CmpNZIndirIdx(Register &LHS, Register &Addr,
+inline CmpNZIndirIdx_match m_CmpNZIndirIdx(const MachineInstr &InsertAt,
+                                           Register &LHS, Register &Addr,
                                            Register &Idx, Register &Flag,
                                            MachineInstr *&Load, AAResults *AA) {
-  return {LHS, Addr, Idx, Flag, Load, AA};
+  return {InsertAt, LHS, Addr, Idx, Flag, Load, AA};
 }
 
 bool MOSInstructionSelector::selectBrCondImm(MachineInstr &MI) {
@@ -1011,7 +1107,7 @@ bool MOSInstructionSelector::selectBrCondImm(MachineInstr &MI) {
   }
   MachineOperand Addr =
       MachineOperand::CreateReg(MOS::NoRegister, /*isDef=*/false);
-  if (mi_match(CondReg, MRI, m_CmpNZAbs(LHS, Addr, Flag, Load, AA))) {
+  if (mi_match(CondReg, MRI, m_CmpNZAbs(MI, LHS, Addr, Flag, Load, AA))) {
     auto Branch = Builder.buildInstr(MOS::CmpBrAbs)
                       .addMBB(Tgt)
                       .addUse(Flag, RegState::Undef)
@@ -1020,12 +1116,14 @@ bool MOSInstructionSelector::selectBrCondImm(MachineInstr &MI) {
                       .add(Addr)
                       .cloneMemRefs(*Load);
     constrainSelectedInstRegOperands(*Branch, TII, TRI, RBI);
+    eraseFoldedVolatileLoad(*Load);
     MI.eraseFromParent();
     return true;
   }
   Register Idx;
   bool ZP = false;
-  if (mi_match(CondReg, MRI, m_CmpNZIdx(LHS, Addr, Idx, Flag, Load, ZP, AA))) {
+  if (mi_match(CondReg, MRI,
+               m_CmpNZIdx(MI, LHS, Addr, Idx, Flag, Load, ZP, AA))) {
     auto Branch = Builder.buildInstr(ZP ? MOS::CmpBrZpIdx : MOS::CmpBrAbsIdx)
                       .addMBB(Tgt)
                       .addUse(Flag, RegState::Undef)
@@ -1035,11 +1133,12 @@ bool MOSInstructionSelector::selectBrCondImm(MachineInstr &MI) {
                       .addUse(Idx)
                       .cloneMemRefs(*Load);
     constrainSelectedInstRegOperands(*Branch, TII, TRI, RBI);
+    eraseFoldedVolatileLoad(*Load);
     MI.eraseFromParent();
     return true;
   }
   Register RegAddr;
-  if (mi_match(CondReg, MRI, m_CmpNZIndir(LHS, RegAddr, Flag, Load, AA))) {
+  if (mi_match(CondReg, MRI, m_CmpNZIndir(MI, LHS, RegAddr, Flag, Load, AA))) {
     auto Branch = Builder.buildInstr(MOS::CmpBrIndir)
                       .addMBB(Tgt)
                       .addUse(Flag, RegState::Undef)
@@ -1048,11 +1147,12 @@ bool MOSInstructionSelector::selectBrCondImm(MachineInstr &MI) {
                       .addUse(RegAddr)
                       .cloneMemRefs(*Load);
     constrainSelectedInstRegOperands(*Branch, TII, TRI, RBI);
+    eraseFoldedVolatileLoad(*Load);
     MI.eraseFromParent();
     return true;
   }
   if (mi_match(CondReg, MRI,
-               m_CmpNZIndirIdx(LHS, RegAddr, Idx, Flag, Load, AA))) {
+               m_CmpNZIndirIdx(MI, LHS, RegAddr, Idx, Flag, Load, AA))) {
     auto Branch = Builder.buildInstr(MOS::CmpBrIndirIdx)
                       .addMBB(Tgt)
                       .addUse(Flag, RegState::Undef)
@@ -1062,6 +1162,7 @@ bool MOSInstructionSelector::selectBrCondImm(MachineInstr &MI) {
                       .addUse(Idx)
                       .cloneMemRefs(*Load);
     constrainSelectedInstRegOperands(*Branch, TII, TRI, RBI);
+    eraseFoldedVolatileLoad(*Load);
     MI.eraseFromParent();
     return true;
   }
@@ -1117,7 +1218,8 @@ bool MOSInstructionSelector::selectSbc(MachineInstr &MI) {
   bool CInSet = CInConst && !CInConst->Value.isZero();
 
   auto RConst = getIConstantVRegValWithLookThrough(R, *Builder.getMRI());
-  MachineInstr *Load;
+  MachineInstr *Load = nullptr;
+  MachineInstr *FoldedLoad = nullptr;
   MachineInstrBuilder Instr;
   // A CMP instruction can be used if we don't need the result, the overflow,
   // and the carry in is known to be set.
@@ -1132,42 +1234,49 @@ bool MOSInstructionSelector::selectSbc(MachineInstr &MI) {
         MachineOperand::CreateReg(MOS::NoRegister, /*isDef=*/false);
     if (!Instr &&
         mi_match(MI.getOperand(6).getReg(), MRI,
-                 m_all_of(m_MInstr(Load), m_FoldedLdAbs(MI, Addr, AA)))) {
+                 m_FoldedLdAbs(MI, Addr, AA,
+                               /*CallerErasesVolatile=*/true, &Load))) {
       Instr =
           Builder
               .buildInstr(MOS::CMPAbs, {MI.getOperand(1)}, {MI.getOperand(5)})
               .add(Addr)
               .cloneMemRefs(*Load);
+      FoldedLoad = Load;
     }
     Register Idx;
     bool ZP = false;
-    if (!Instr && mi_match(MI.getOperand(6).getReg(), MRI,
-                           m_all_of(m_MInstr(Load),
-                                    m_FoldedLdIdx(MI, Addr, Idx, ZP, AA)))) {
+    if (!Instr &&
+        mi_match(MI.getOperand(6).getReg(), MRI,
+                 m_FoldedLdIdx(MI, Addr, Idx, ZP, AA,
+                               /*CallerErasesVolatile=*/true, &Load))) {
       Instr = Builder
                   .buildInstr(ZP ? MOS::CMPZpIdx : MOS::CMPAbsIdx,
                               {MI.getOperand(1)}, {MI.getOperand(5)})
                   .add(Addr)
                   .addUse(Idx)
                   .cloneMemRefs(*Load);
+      FoldedLoad = Load;
     }
     Register RegAddr;
     if (!Instr &&
         mi_match(MI.getOperand(6).getReg(), MRI,
-                 m_all_of(m_MInstr(Load), m_FoldedLdIndir(MI, RegAddr, AA)))) {
+                 m_FoldedLdIndir(MI, RegAddr, AA,
+                                 /*CallerErasesVolatile=*/true, &Load))) {
       Instr = Builder
                   .buildInstr(MOS::CMPIndir, {MI.getOperand(1)},
                               {MI.getOperand(5), RegAddr})
                   .cloneMemRefs(*Load);
+      FoldedLoad = Load;
     }
     if (!Instr &&
         mi_match(MI.getOperand(6).getReg(), MRI,
-                 m_all_of(m_MInstr(Load),
-                          m_FoldedLdIndirIdx(MI, RegAddr, Idx, AA)))) {
+                 m_FoldedLdIndirIdx(MI, RegAddr, Idx, AA,
+                                    /*CallerErasesVolatile=*/true, &Load))) {
       Instr = Builder
                   .buildInstr(MOS::CMPIndirIdx, {MI.getOperand(1)},
                               {MI.getOperand(5), RegAddr, Idx})
                   .cloneMemRefs(*Load);
+      FoldedLoad = Load;
     }
     if (!Instr) {
       Instr = Builder.buildInstr(MOS::CMPImag8, {MI.getOperand(1)},
@@ -1238,6 +1347,8 @@ bool MOSInstructionSelector::selectSbc(MachineInstr &MI) {
     }
   }
   constrainSelectedInstRegOperands(*Instr, TII, TRI, RBI);
+  if (FoldedLoad)
+    eraseFoldedVolatileLoad(*FoldedLoad);
   MI.eraseFromParent();
   return true;
 }
